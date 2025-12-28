@@ -44,9 +44,10 @@ const App: React.FC = () => {
       setIsDriveConnected(true);
       setMessages(prev => [...prev, { role: 'system', content: 'Authentication Successful. Syncing with Drive...', timestamp: Date.now() }]);
       await handleSyncDown();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setMessages(prev => [...prev, { role: 'system', content: 'Authentication Failed.', timestamp: Date.now() }]);
+      const msg = err.message || JSON.stringify(err);
+      setMessages(prev => [...prev, { role: 'system', content: `Authentication Failed: ${msg}`, timestamp: Date.now() }]);
     }
   };
 
@@ -112,8 +113,10 @@ const App: React.FC = () => {
       // Auto-sync after every turn (Ouroboros loop)
       await handleSyncUp(newMemory, newFocus);
 
-    } catch (error) {
-      setMessages(prev => [...prev, { role: 'system', content: 'Error connecting to Neural Interface. Check API Key.', timestamp: Date.now() }]);
+    } catch (error: any) {
+      console.error(error);
+      const errorMessage = error.message || "Unknown error connecting to Neural Interface.";
+      setMessages(prev => [...prev, { role: 'system', content: `Error: ${errorMessage}`, timestamp: Date.now() }]);
     } finally {
       setIsLoading(false);
     }

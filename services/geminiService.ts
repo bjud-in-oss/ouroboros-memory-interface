@@ -31,7 +31,8 @@ const memoryUpdateSchema: Schema = {
                     name: { type: Type.STRING },
                     status: { type: Type.STRING },
                     description: { type: Type.STRING }
-                }
+                },
+                required: ["id", "name", "status", "description"]
             }
         },
         learned_truths: {
@@ -49,7 +50,8 @@ const memoryUpdateSchema: Schema = {
                             id: { type: Type.STRING },
                             label: { type: Type.STRING },
                             type: { type: Type.STRING }
-                        }
+                        },
+                        required: ["id", "label", "type"]
                     }
                 },
                 edges: {
@@ -60,10 +62,12 @@ const memoryUpdateSchema: Schema = {
                             source: { type: Type.STRING },
                             target: { type: Type.STRING },
                             relation: { type: Type.STRING }
-                        }
+                        },
+                        required: ["source", "target", "relation"]
                     }
                 }
-            }
+            },
+            required: ["nodes", "edges"]
         },
         confidence_metrics: {
             type: Type.ARRAY,
@@ -77,7 +81,8 @@ const memoryUpdateSchema: Schema = {
                 required: ["label", "score"]
             }
         }
-      }
+      },
+      required: ["schema_version", "core_instructions", "active_projects", "learned_truths", "knowledge_graph", "confidence_metrics"]
     },
     updated_focus: {
         type: Type.OBJECT,
@@ -93,7 +98,8 @@ const memoryUpdateSchema: Schema = {
                 type: Type.ARRAY,
                 items: { type: Type.STRING }
             }
-        }
+        },
+        required: ["last_updated", "current_objective", "chain_of_thought", "pending_tasks"]
     }
   },
   required: ["text_response", "updated_memory", "updated_focus"]
@@ -110,7 +116,7 @@ export const processInteraction = async (
 }> => {
   
   if (!apiKey) {
-      throw new Error("API Key is missing.");
+      throw new Error("API Key is missing. Please ensure process.env.API_KEY is configured.");
   }
 
   const model = "gemini-3-flash-preview";
@@ -144,9 +150,10 @@ export const processInteraction = async (
   try {
     const response = await ai.models.generateContent({
         model,
-        contents: [
-            { role: 'user', parts: [{ text: userPrompt }] }
-        ],
+        contents: {
+            role: 'user', 
+            parts: [{ text: userPrompt }] 
+        },
         config: {
             systemInstruction: systemPrompt,
             responseMimeType: "application/json",
@@ -154,7 +161,11 @@ export const processInteraction = async (
         }
     });
 
-    const jsonText = response.text || "{}";
+    const jsonText = response.text;
+    if (!jsonText) {
+        throw new Error("Empty response from model. Possible safety block or quota limit.");
+    }
+    
     const parsed = JSON.parse(jsonText);
 
     return {
@@ -163,8 +174,9 @@ export const processInteraction = async (
         newFocus: parsed.updated_focus || currentFocus
     };
 
-  } catch (error) {
+  } catch (error: any) {
     console.error("Gemini Interaction Error:", error);
-    throw error;
+    // Rethrow with a more user-friendly message if possible, or pass the raw error message
+    throw new Error(error.message || "Unknown error occurred during neural interface connection.");
   }
 };
