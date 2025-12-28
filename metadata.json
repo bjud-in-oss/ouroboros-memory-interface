@@ -1,0 +1,5 @@
+{
+  "name": "Ouroboros AI Interface",
+  "description": "A recursive memory interface for autonomous agents using Drive-Augmented architecture.",
+  "requestFramePermissions": []
+}
