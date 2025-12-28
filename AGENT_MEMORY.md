@@ -1,27 +1,40 @@
 # AGENT_MEMORY
 
 ## System Status
-- **Phase:** 3 (The Autonomous Loop)
+- **Phase:** 3 (The Autonomous Loop - Stable)
 - **Architecture:** Drive-Augmented Ouroboros (React 19 + Vite + Netlify + Drive API)
-- **Current Focus:** Operational. The Neural Interface now actively syncs state with Google Drive.
+- **Current Focus:** Ensuring robust persistence via "Folder Awareness" and strict API protocols.
 
 ## Architecture Guidelines (Immutable)
 1. **Frontend:** React 19+ (Vite/TypeScript). No custom backend.
 2. **Database:** Google Drive (via GSI/Drive API). `app-data.json` holds the master state.
-3. **Deployment:** Netlify. `scripts/init-netlify.js` MUST run before build.
+3. **Deployment:** Netlify. `scripts/init-netlify.js` MUST run before build to generate `_redirects`.
 4. **Environment:** Map `VITE_` vars to `process.env` in `vite.config.ts`.
 5. **Auth:** Incremental Authentication. `drive.file` scope requested only on user action.
 
-## Lessons Learned
-- **Schema Validation:** Gemini API requires strictly typed objects in response schemas. Empty properties cause 400 errors.
-- **Persistence:** LocalStorage has been deprecated. Real Drive API integration is active using `multipart/related` uploads for atomic JSON updates.
-- **Identity:** Using Google Identity Services (GIS) for auth and `gapi.client` for Drive discovery/actions creates a hybrid but robust flow.
-- **Statelessness:** We do not store the File ID locally. We search for `app-data.json` by name on every session start to ensure true device agnosticism.
-- **Deployment:** Netlify SPA routing requires `_redirects` to prevent 404s on refresh.
-- **Build Environment:** Project uses Vite. Do NOT use `importmap` in index.html; let the bundler handle dependencies.
+## Critical Technical Laws (The "Ouroboros" Protocol)
+
+### 1. The Drive ID Law
+Google Drive is **NOT** a file system with paths (e.g., `/Ouroboros/data.json`). It is a flat, ID-based database.
+- **Rule:** Never attempt to save to a path string.
+- **Requirement:** Always resolve `folderId` via a search query (`mimeType = folder and name = 'Ouroboros'`) before any file operation.
+
+### 2. The Scope Visibility Strategy
+We use the restricted `drive.file` scope for user trust. This means the app *cannot see* folders created by the user outside the app.
+- **Strategy:** The `ensureFolderExists` function is mandatory. It attempts to find the folder; if it returns null (due to scope visibility), it **MUST** create a new folder that the app owns.
+
+### 3. The Multipart PATCH Rule
+When updating existing files using the Drive API `multipart/related` method:
+- **Rule:** Do **NOT** include the `parents` field in the metadata during a `PATCH` request.
+- **Reason:** Including parents implies a "move" operation, which triggers strict validation and often results in `400 Bad Request`. Only use `parents` during `POST` (creation).
+
+### 4. Build & Environment Logic
+- **Vite Config:** `process.env` is not available in the browser by default. We explicitly map `VITE_API_KEY` and `VITE_GOOGLE_CLIENT_ID` inside `vite.config.ts`.
+- **Netlify Routing:** Single Page Applications (SPA) require a `public/_redirects` file (`/* /index.html 200`) to handle browser refreshes. This is generated automatically by `scripts/init-netlify.js`.
+- **Import Maps:** Do NOT use `<script type="importmap">` in `index.html`. Let Vite handle dependency resolution to avoid conflicts.
 
 ## Active Modules
 - `services/geminiService.ts`: Neural Interface (Ouroboros Loop).
-- `services/driveService.ts`: Backend Persistence (Drive API v3).
+- `services/driveService.ts`: Backend Persistence (Drive API v3) - **UPDATED** with Folder Awareness.
 - `components/MemoryPanel.tsx`: Visualizer for `LONG_TERM_MEMORY.json`.
 - `components/FocusPanel.tsx`: Log viewer for `CURRENT_FOCUS.md`.

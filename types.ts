@@ -1,7 +1,7 @@
 export interface KnowledgeNode {
   id: string;
   label: string;
-  type: 'concept' | 'entity' | 'project' | 'truth';
+  type: 'concept' | 'entity' | 'project' | 'truth' | 'infrastructure' | 'constraint';
 }
 
 export interface KnowledgeEdge {

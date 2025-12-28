@@ -5,10 +5,9 @@ const ENV_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const FALLBACK_CLIENT_ID = '765827205160-ft7dv2ud5ruf2tgft4jvt68dm7eboei6.apps.googleusercontent.com';
 const CLIENT_ID = ENV_CLIENT_ID && ENV_CLIENT_ID.length > 5 ? ENV_CLIENT_ID : FALLBACK_CLIENT_ID;
 
-// Note: We do NOT use the API_KEY for GAPI init anymore to prevent "Invalid Key" errors 
-// if the key is restricted to Gemini only. GAPI can load discovery docs anonymously or via the token later.
 const DISCOVERY_DOCS = ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'];
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
+const FOLDER_NAME = 'Ouroboros';
 const FILE_NAME = 'app-data.json';
 
 let tokenClient: any;
@@ -27,8 +26,6 @@ export const loadGoogleScripts = (callback: () => void) => {
   script1.onload = () => {
     window.gapi.load('client', async () => {
       try {
-        // We init GAPI without the API Key to avoid restriction errors.
-        // The Auth token from GIS will handle permissions later.
         await window.gapi.client.init({
           discoveryDocs: DISCOVERY_DOCS,
         });
@@ -53,7 +50,7 @@ export const loadGoogleScripts = (callback: () => void) => {
       tokenClient = window.google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID,
         scope: SCOPES,
-        callback: () => {}, // Must be a function, even if empty initially
+        callback: () => {}, 
       });
       gisInited = true;
       if (gapiInited) callback();
@@ -71,7 +68,6 @@ export const authenticate = (): Promise<void> => {
   return new Promise((resolve, reject) => {
     if (!tokenClient) return reject('Google Scripts not loaded');
     
-    // Override the callback for this specific request
     tokenClient.callback = async (resp: any) => {
       if (resp.error) {
         reject(resp);
@@ -79,19 +75,53 @@ export const authenticate = (): Promise<void> => {
       resolve();
     };
 
-    // Request access token with prompt if needed
     tokenClient.requestAccessToken({ prompt: 'consent' });
   });
 };
 
 /**
- * Helper to find the existing app-data.json file ID.
+ * Ensures the 'Ouroboros' folder exists.
+ * Returns the Folder ID.
+ */
+const ensureFolderExists = async (): Promise<string> => {
+  try {
+    // 1. Search for existing folder
+    const response = await window.gapi.client.drive.files.list({
+      q: `mimeType = 'application/vnd.google-apps.folder' and name = '${FOLDER_NAME}' and trashed = false`,
+      fields: 'files(id, name)',
+      spaces: 'drive',
+    });
+    
+    const files = response.result.files;
+    if (files && files.length > 0) {
+      return files[0].id;
+    }
+
+    // 2. Create if not found
+    const createResponse = await window.gapi.client.drive.files.create({
+      resource: {
+        name: FOLDER_NAME,
+        mimeType: 'application/vnd.google-apps.folder',
+      },
+      fields: 'id',
+    });
+    
+    return createResponse.result.id;
+
+  } catch (err) {
+    console.error("Error ensuring folder exists:", err);
+    throw new Error("Failed to initialize Ouroboros folder structure.");
+  }
+};
+
+/**
+ * Helper to find the existing app-data.json file ID inside the specific folder.
  * Returns null if not found.
  */
-const findFileId = async (): Promise<string | null> => {
+const findFileId = async (folderId: string): Promise<string | null> => {
   try {
     const response = await window.gapi.client.drive.files.list({
-      q: `name = '${FILE_NAME}' and trashed = false and 'root' in parents`,
+      q: `name = '${FILE_NAME}' and '${folderId}' in parents and trashed = false`,
       fields: 'files(id, name)',
       spaces: 'drive',
     });
@@ -109,16 +139,38 @@ const findFileId = async (): Promise<string | null> => {
 /**
  * Saves the full AppData to Google Drive.
  * Uses multipart/related to upload JSON content.
- * If file exists -> Update (PATCH).
- * If not -> Create (POST).
+ * 
+ * Logic:
+ * 1. Get/Create Ouroboros Folder.
+ * 2. Check if file exists in that folder.
+ * 3. If exists -> PATCH (Update content).
+ * 4. If not -> POST (Create new file with parent=folderId).
  */
 export const saveState = async (data: AppData): Promise<void> => {
-  const fileId = await findFileId();
+  // Ensure the folder exists first
+  const folderId = await ensureFolderExists();
+  const fileId = await findFileId(folderId);
   
-  const metadata = {
+  // Base metadata
+  let metadata: any = {
     name: FILE_NAME,
     mimeType: 'application/json',
   };
+
+  const accessToken = window.gapi.client.getToken().access_token;
+  let url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+  let method = 'POST';
+
+  if (fileId) {
+    // Update existing file
+    url = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`;
+    method = 'PATCH';
+    // When patching, we do NOT include parents in metadata usually, just updating content
+  } else {
+    // Create new file
+    // IMPORTANT: Link it to the folder
+    metadata.parents = [folderId];
+  }
 
   const multipartRequestBody =
     `--foo_bar_baz\r\n` +
@@ -128,16 +180,6 @@ export const saveState = async (data: AppData): Promise<void> => {
     `Content-Type: application/json\r\n\r\n` +
     `${JSON.stringify(data, null, 2)}\r\n` +
     `--foo_bar_baz--`;
-
-  const accessToken = window.gapi.client.getToken().access_token;
-  
-  let url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
-  let method = 'POST';
-
-  if (fileId) {
-    url = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`;
-    method = 'PATCH';
-  }
 
   const response = await fetch(url, {
     method: method,
@@ -158,7 +200,10 @@ export const saveState = async (data: AppData): Promise<void> => {
  * Returns null if file does not exist.
  */
 export const loadState = async (): Promise<AppData | null> => {
-  const fileId = await findFileId();
+  // Ensure we are looking in the right folder
+  const folderId = await ensureFolderExists();
+  const fileId = await findFileId(folderId);
+  
   if (!fileId) return null;
 
   const response = await window.gapi.client.drive.files.get({
@@ -170,7 +215,6 @@ export const loadState = async (): Promise<AppData | null> => {
   return response.result as AppData;
 };
 
-// Global types for window extension
 declare global {
   interface Window {
     gapi: any;

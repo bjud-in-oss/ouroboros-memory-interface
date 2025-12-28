@@ -86,6 +86,8 @@ const KnowledgeGraph: React.FC<Props> = ({ data }) => {
               case 'project': return '#8b5cf6'; // violet
               case 'entity': return '#ec4899'; // pink
               case 'truth': return '#10b981'; // emerald
+              case 'infrastructure': return '#f59e0b'; // amber
+              case 'constraint': return '#ef4444'; // red
               default: return '#3b82f6'; // blue
           }
       })
