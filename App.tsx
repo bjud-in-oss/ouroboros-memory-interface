@@ -8,6 +8,13 @@ import FocusPanel from './components/FocusPanel';
 import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Bug, Wrench } from 'lucide-react';
 
 const App: React.FC = () => {
+  // --- DEBUG BRIDGE START ---
+  useEffect(() => {
+    console.log("🔧 Manual Override: Exposing driveService to window...");
+    (window as any).driveService = driveService;
+  }, []);
+  // --- DEBUG BRIDGE END ---
+
   // --- State ---
   const [memory, setMemory] = useState<LongTermMemory>(INITIAL_MEMORY);
   const [focus, setFocus] = useState<FocusLog>(INITIAL_FOCUS);
@@ -163,11 +170,7 @@ const App: React.FC = () => {
         setFocus(INITIAL_FOCUS);
         setMessages([{ role: 'system', content: 'Local Memory Wiped.', timestamp: Date.now() }]);
       }
-      useEffect(() => {
-  // DEBUG: Exponera driveService till window för manuell testning
-  (window as any).driveService = driveService;
-  console.log("🔧 MANUAL OVERRIDE: driveService is now accessible via window.driveService");
-}, []);
+      
   };
 
   return (
