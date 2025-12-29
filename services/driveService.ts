@@ -140,17 +140,26 @@ const findFileId = async (fileName: string, folderId: string): Promise<string | 
 
 /**
  * Reads content from a specific Drive file ID.
- * Supports both JSON and plain text (Markdown).
+ * Strictly returns the raw text content of the file.
+ * Throws an error if the request fails.
  */
-export const readFile = async (fileId: string): Promise<any> => {
+export const readFile = async (fileId: string): Promise<string> => {
     try {
-        const response = await window.gapi.client.drive.files.get({
-            fileId: fileId,
-            alt: 'media',
+        const accessToken = window.gapi.client.getToken().access_token;
+        const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${accessToken}`
+            }
         });
-        return response.result;
-    } catch (error) {
-        console.error("Error reading file:", error);
+
+        if (!response.ok) {
+            throw new Error(`Read File Failed: ${response.status} ${response.statusText}`);
+        }
+
+        return await response.text();
+    } catch (error: any) {
+        console.error(`Error reading file ${fileId}:`, error);
         throw error;
     }
 };
@@ -207,7 +216,7 @@ export const createFile = async (name: string, content: string | object, folderI
  */
 const createBackup = async (folderId: string, currentFileId: string): Promise<void> => {
     try {
-        // 1. Read current content
+        // 1. Read current content (Now returns string)
         const currentContent = await readFile(currentFileId);
         
         // 2. Check if backup file exists
@@ -236,7 +245,7 @@ const createBackup = async (folderId: string, currentFileId: string): Promise<vo
             `${JSON.stringify(metadata)}\r\n` +
             `--foo_bar_baz\r\n` +
             `Content-Type: application/json\r\n\r\n` +
-            `${JSON.stringify(currentContent, null, 2)}\r\n` +
+            `${currentContent}\r\n` + // Inject raw string directly
             `--foo_bar_baz--`;
 
         const response = await fetch(url, {
@@ -323,7 +332,13 @@ export const loadState = async (): Promise<AppData | null> => {
   
   if (!fileId) return null;
 
-  return await readFile(fileId);
+  try {
+      const content = await readFile(fileId);
+      return JSON.parse(content);
+  } catch (err) {
+      console.error("Failed to parse AppData JSON:", err);
+      throw new Error("AppData file is corrupted or not JSON.");
+  }
 };
 
 /**
