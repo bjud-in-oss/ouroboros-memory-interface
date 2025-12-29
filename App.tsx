@@ -5,7 +5,7 @@ import { processInteraction } from './services/geminiService';
 import * as driveService from './services/driveService';
 import MemoryPanel from './components/MemoryPanel';
 import FocusPanel from './components/FocusPanel';
-import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Bug } from 'lucide-react';
+import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Bug, Wrench } from 'lucide-react';
 
 const App: React.FC = () => {
   // --- State ---
@@ -100,6 +100,21 @@ const App: React.FC = () => {
     setMessages(prev => [...prev, { role: 'system', content: report, timestamp: Date.now() }]);
   };
 
+  const handleRepair = async () => {
+    if (!isDriveConnected) {
+        setMessages(prev => [...prev, { role: 'system', content: 'Connect to Drive to perform repairs.', timestamp: Date.now() }]);
+        return;
+    }
+    setMessages(prev => [...prev, { role: 'system', content: 'Initiating Surgical Memory Injection...', timestamp: Date.now() }]);
+    const result = await driveService.performSurgicalInjection();
+    setMessages(prev => [...prev, { role: 'system', content: result, timestamp: Date.now() }]);
+    
+    // Auto sync down if successful
+    if (result.includes("online")) {
+        await handleSyncDown();
+    }
+  };
+
   const handleSendMessage = async () => {
     if (!input.trim() || isLoading) return;
 
@@ -174,13 +189,22 @@ const App: React.FC = () => {
             </div>
             <div className="flex gap-2">
                 {isDriveConnected && (
-                    <button 
-                        onClick={handleDiagnostics}
-                        className="p-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white rounded-md transition-colors border border-zinc-700"
-                        title="Run System Diagnostics"
-                    >
-                        <Bug size={14} />
-                    </button>
+                    <>
+                        <button 
+                            onClick={handleDiagnostics}
+                            className="p-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white rounded-md transition-colors border border-zinc-700"
+                            title="Run System Diagnostics"
+                        >
+                            <Bug size={14} />
+                        </button>
+                        <button 
+                            onClick={handleRepair}
+                            className="p-1.5 bg-zinc-800 hover:bg-zinc-700 text-amber-500 hover:text-amber-300 rounded-md transition-colors border border-zinc-700"
+                            title="Surgical Memory Injection (Repair)"
+                        >
+                            <Wrench size={14} />
+                        </button>
+                    </>
                 )}
                 {!isDriveConnected && (
                     <button 

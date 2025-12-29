@@ -1,4 +1,5 @@
 import { AppData } from '../types';
+import { INITIAL_MEMORY, INITIAL_FOCUS } from '../constants';
 
 // Fallback ID to ensure GIS never fails due to missing env var
 const ENV_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
@@ -273,6 +274,67 @@ export const runDiagnostics = async (): Promise<string> => {
 
   } catch (err: any) {
     return `Diagnostic Error: ${err.message}`;
+  }
+};
+
+/**
+ * Creates the app-data.json file explicitly inside the Ouroboros folder.
+ * Used for recovery when the file is missing or misplaced.
+ */
+export const performSurgicalInjection = async (): Promise<string> => {
+  try {
+    const folderId = await ensureFolderExists();
+    
+    // Check if it already exists correctly
+    const existingId = await findFileId(folderId);
+    if (existingId) {
+      return `File already exists in correct folder (ID: ${existingId}). No action taken.`;
+    }
+
+    // Create the master payload
+    const payload: AppData = {
+      app_version: "1.0.0",
+      last_sync_timestamp: Date.now(),
+      memory: INITIAL_MEMORY,
+      focus: INITIAL_FOCUS
+    };
+
+    const accessToken = window.gapi.client.getToken().access_token;
+    const url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+    
+    const metadata = {
+      name: FILE_NAME,
+      mimeType: 'application/json',
+      parents: [folderId] // CRITICAL: Explicitly set parent
+    };
+
+    const multipartRequestBody =
+      `--foo_bar_baz\r\n` +
+      `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+      `${JSON.stringify(metadata)}\r\n` +
+      `--foo_bar_baz\r\n` +
+      `Content-Type: application/json\r\n\r\n` +
+      `${JSON.stringify(payload, null, 2)}\r\n` +
+      `--foo_bar_baz--`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'multipart/related; boundary=foo_bar_baz',
+      },
+      body: multipartRequestBody,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Injection Failed: ${response.statusText}`);
+    }
+
+    const result = await response.json();
+    return `Minne återställt. Systemet är nu online och redo för GitHub-integration. (File ID: ${result.id})`;
+
+  } catch (err: any) {
+    return `Critical Failure: ${err.message}`;
   }
 };
 
