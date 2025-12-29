@@ -163,6 +163,11 @@ const App: React.FC = () => {
         setFocus(INITIAL_FOCUS);
         setMessages([{ role: 'system', content: 'Local Memory Wiped.', timestamp: Date.now() }]);
       }
+      useEffect(() => {
+  // DEBUG: Exponera driveService till window för manuell testning
+  (window as any).driveService = driveService;
+  console.log("🔧 MANUAL OVERRIDE: driveService is now accessible via window.driveService");
+}, []);
   };
 
   return (
