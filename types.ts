@@ -20,6 +20,7 @@ export interface Project {
   name: string;
   status: 'active' | 'pending' | 'completed' | 'archived';
   description: string;
+  detailed_spec_file_id?: string;
 }
 
 export interface ConfidenceMetric {

@@ -1,11 +1,10 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { LongTermMemory, FocusLog } from "../types";
+import { readFile } from "./driveService";
 
 const apiKey = process.env.API_KEY || '';
 const ai = new GoogleGenAI({ apiKey });
 
-// Schema for the structured output we want from the model
-// This ensures the model returns both a text response AND the updated memory files
 const memoryUpdateSchema: Schema = {
   type: Type.OBJECT,
   properties: {
@@ -15,7 +14,7 @@ const memoryUpdateSchema: Schema = {
     },
     updated_memory: {
       type: Type.OBJECT,
-      description: " The full updated JSON content for LONG_TERM_MEMORY.json",
+      description: "The full updated JSON content for LONG_TERM_MEMORY.json",
       properties: {
         schema_version: { type: Type.STRING },
         core_instructions: { 
@@ -30,7 +29,8 @@ const memoryUpdateSchema: Schema = {
                     id: { type: Type.STRING },
                     name: { type: Type.STRING },
                     status: { type: Type.STRING },
-                    description: { type: Type.STRING }
+                    description: { type: Type.STRING },
+                    detailed_spec_file_id: { type: Type.STRING, description: "Drive File ID for full Markdown spec if content is large." }
                 },
                 required: ["id", "name", "status", "description"]
             }
@@ -121,6 +121,30 @@ export const processInteraction = async (
 
   const model = "gemini-3-flash-preview";
 
+  // --- DYNAMIC RETRIEVAL LOGIC ---
+  // Lazy load heavy context only if relevant to the current user prompt.
+  let dynamicContext = "";
+  
+  // Check active projects for detailed specs
+  const relevantProjects = currentMemory.active_projects.filter(p => 
+      p.detailed_spec_file_id && userPrompt.toLowerCase().includes(p.name.toLowerCase())
+  );
+
+  if (relevantProjects.length > 0) {
+      console.log(`Dynamic Retrieval: Loading ${relevantProjects.length} spec(s)...`);
+      try {
+          const specs = await Promise.all(relevantProjects.map(async (p) => {
+              if (!p.detailed_spec_file_id) return "";
+              const content = await readFile(p.detailed_spec_file_id);
+              return `--- SPECIFICATION FOR PROJECT: ${p.name} ---\n${content}\n---------------------------------------`;
+          }));
+          dynamicContext = "\n\n=== DYNAMICALLY LOADED CONTEXT ===\n" + specs.join("\n");
+      } catch (err) {
+          console.error("Failed to load dynamic context:", err);
+          dynamicContext = "\n\n[System Warning: Failed to retrieve detailed project specs from Drive]";
+      }
+  }
+
   const systemPrompt = `
   You are an autonomous AI agent operating under the "Drive-Augmented Ouroboros" architecture.
   
@@ -129,15 +153,19 @@ export const processInteraction = async (
   1. LONG_TERM_MEMORY.json (Your cumulative knowledge, beliefs, and projects)
   2. CURRENT_FOCUS.md (Your stream of consciousness and immediate tasks)
 
+  NEW ARCHITECTURE: SAFE CONTEXT CAPSULES
+  - Large text blocks (like project specifications) are stored in separate Markdown files on Drive.
+  - You can see references to these files in 'active_projects' via the 'detailed_spec_file_id' field.
+  - If the user asks about a specific project, the system will inject that file's content below.
+
   YOUR TASK:
   1. Read the provided Current Memory and Current Focus.
-  2. Analyze the User's Input.
+  2. Analyze the User's Input and any Dynamically Loaded Context.
   3. Formulate a response.
-  4. CRITICAL: Update your Memory and Focus to reflect new information, changes in state, or valid reasoning steps.
+  4. CRITICAL: Update your Memory and Focus to reflect new information.
      - Add new nodes to knowledge_graph if concepts are introduced.
-     - Update active_projects if tasks are started/finished.
-     - Append to chain_of_thought in Focus to show your reasoning.
-     - Update confidence_metrics based on certainty.
+     - Update active_projects. If you need to store a large spec, indicate that in your text response (the code handles file creation requests separately in future updates, currently you manage the ID references).
+     - Append to chain_of_thought in Focus.
   
   INPUT CONTEXT:
   --- LONG_TERM_MEMORY.json ---
@@ -145,6 +173,8 @@ export const processInteraction = async (
   
   --- CURRENT_FOCUS.md (State) ---
   ${JSON.stringify(currentFocus)}
+
+  ${dynamicContext}
   `;
 
   try {
@@ -176,7 +206,6 @@ export const processInteraction = async (
 
   } catch (error: any) {
     console.error("Gemini Interaction Error:", error);
-    // Rethrow with a more user-friendly message if possible, or pass the raw error message
     throw new Error(error.message || "Unknown error occurred during neural interface connection.");
   }
 };

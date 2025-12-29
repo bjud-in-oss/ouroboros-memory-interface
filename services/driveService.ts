@@ -10,6 +10,7 @@ const DISCOVERY_DOCS = ['https://www.googleapis.com/discovery/v1/apis/drive/v3/r
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 const FOLDER_NAME = 'Ouroboros';
 const FILE_NAME = 'app-data.json';
+const BACKUP_FILE_NAME = 'app-data.backup.json';
 
 let tokenClient: any;
 let gapiInited = false;
@@ -116,13 +117,13 @@ const ensureFolderExists = async (): Promise<string> => {
 };
 
 /**
- * Helper to find the existing app-data.json file ID inside the specific folder.
+ * Helper to find a file ID by name inside a specific folder.
  * Returns null if not found.
  */
-const findFileId = async (folderId: string): Promise<string | null> => {
+const findFileId = async (fileName: string, folderId: string): Promise<string | null> => {
   try {
     const response = await window.gapi.client.drive.files.list({
-      q: `name = '${FILE_NAME}' and '${folderId}' in parents and trashed = false`,
+      q: `name = '${fileName}' and '${folderId}' in parents and trashed = false`,
       fields: 'files(id, name)',
       spaces: 'drive',
     });
@@ -132,26 +133,144 @@ const findFileId = async (folderId: string): Promise<string | null> => {
     }
     return null;
   } catch (err) {
-    console.error("Error finding file:", err);
+    console.error(`Error finding file ${fileName}:`, err);
     throw err;
   }
 };
 
 /**
+ * Reads content from a specific Drive file ID.
+ * Supports both JSON and plain text (Markdown).
+ */
+export const readFile = async (fileId: string): Promise<any> => {
+    try {
+        const response = await window.gapi.client.drive.files.get({
+            fileId: fileId,
+            alt: 'media',
+        });
+        return response.result;
+    } catch (error) {
+        console.error("Error reading file:", error);
+        throw error;
+    }
+};
+
+/**
+ * Creates a new file in the specified folder.
+ * Returns the new File ID.
+ */
+export const createFile = async (name: string, content: string | object, folderId: string, mimeType: string): Promise<string> => {
+    try {
+        const metadata = {
+            name: name,
+            mimeType: mimeType,
+            parents: [folderId]
+        };
+
+        const accessToken = window.gapi.client.getToken().access_token;
+        const bodyContent = typeof content === 'object' ? JSON.stringify(content, null, 2) : content;
+        
+        const multipartRequestBody =
+            `--foo_bar_baz\r\n` +
+            `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+            `${JSON.stringify(metadata)}\r\n` +
+            `--foo_bar_baz\r\n` +
+            `Content-Type: ${mimeType}\r\n\r\n` +
+            `${bodyContent}\r\n` +
+            `--foo_bar_baz--`;
+
+        const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'multipart/related; boundary=foo_bar_baz',
+            },
+            body: multipartRequestBody,
+        });
+
+        if (!response.ok) {
+            throw new Error(`Create File Failed: ${response.statusText}`);
+        }
+        
+        const result = await response.json();
+        return result.id;
+
+    } catch (error) {
+        console.error("Error creating file:", error);
+        throw error;
+    }
+};
+
+/**
+ * Creates a backup of the current state file before overwriting.
+ * Implements the "Snapshot Strategy".
+ */
+const createBackup = async (folderId: string, currentFileId: string): Promise<void> => {
+    try {
+        // 1. Read current content
+        const currentContent = await readFile(currentFileId);
+        
+        // 2. Check if backup file exists
+        const backupFileId = await findFileId(BACKUP_FILE_NAME, folderId);
+        
+        const accessToken = window.gapi.client.getToken().access_token;
+        let url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+        let method = 'POST';
+        
+        // Prepare metadata
+        let metadata: any = {
+            name: BACKUP_FILE_NAME,
+            mimeType: 'application/json'
+        };
+
+        if (backupFileId) {
+            url = `https://www.googleapis.com/upload/drive/v3/files/${backupFileId}?uploadType=multipart`;
+            method = 'PATCH';
+        } else {
+            metadata.parents = [folderId];
+        }
+
+        const multipartRequestBody =
+            `--foo_bar_baz\r\n` +
+            `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+            `${JSON.stringify(metadata)}\r\n` +
+            `--foo_bar_baz\r\n` +
+            `Content-Type: application/json\r\n\r\n` +
+            `${JSON.stringify(currentContent, null, 2)}\r\n` +
+            `--foo_bar_baz--`;
+
+        const response = await fetch(url, {
+            method: method,
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'multipart/related; boundary=foo_bar_baz',
+            },
+            body: multipartRequestBody,
+        });
+
+        if (!response.ok) console.warn("Backup creation failed, but proceeding with save.");
+
+    } catch (err) {
+        console.error("Backup Error:", err);
+        // We do not throw here to avoid blocking the main save if backup fails, 
+        // but in a strict system we might want to.
+    }
+};
+
+/**
  * Saves the full AppData to Google Drive.
- * Uses multipart/related to upload JSON content.
- * 
- * Logic:
- * 1. Get/Create Ouroboros Folder.
- * 2. Check if file exists in that folder.
- * 3. If exists -> PATCH (Update content).
- * 4. If not -> POST (Create new file with parent=folderId).
+ * Implements "Snapshot Strategy": Backs up existing data before writing new data.
  */
 export const saveState = async (data: AppData): Promise<void> => {
   // Ensure the folder exists first
   const folderId = await ensureFolderExists();
-  const fileId = await findFileId(folderId);
+  const fileId = await findFileId(FILE_NAME, folderId);
   
+  // SNAPSHOT STRATEGY: If file exists, backup first
+  if (fileId) {
+      await createBackup(folderId, fileId);
+  }
+
   // Base metadata
   let metadata: any = {
     name: FILE_NAME,
@@ -166,10 +285,8 @@ export const saveState = async (data: AppData): Promise<void> => {
     // Update existing file
     url = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`;
     method = 'PATCH';
-    // When patching, we do NOT include parents in metadata usually, just updating content
   } else {
     // Create new file
-    // IMPORTANT: Link it to the folder
     metadata.parents = [folderId];
   }
 
@@ -201,29 +318,20 @@ export const saveState = async (data: AppData): Promise<void> => {
  * Returns null if file does not exist.
  */
 export const loadState = async (): Promise<AppData | null> => {
-  // Ensure we are looking in the right folder
   const folderId = await ensureFolderExists();
-  const fileId = await findFileId(folderId);
+  const fileId = await findFileId(FILE_NAME, folderId);
   
   if (!fileId) return null;
 
-  const response = await window.gapi.client.drive.files.get({
-    fileId: fileId,
-    alt: 'media',
-  });
-
-  // The result body is the JSON object directly
-  return response.result as AppData;
+  return await readFile(fileId);
 };
 
 /**
  * Diagnostic tool to inspect the Drive state.
- * Reports on the existence of the folder and critical files.
  */
 export const runDiagnostics = async (): Promise<string> => {
   const log = [];
   try {
-    // 1. Check Folder
     log.push("--- DIAGNOSTIC REPORT ---");
     log.push("1. Checking for 'Ouroboros' Folder...");
     const folderResp = await window.gapi.client.drive.files.list({
@@ -232,41 +340,22 @@ export const runDiagnostics = async (): Promise<string> => {
       spaces: 'drive'
     });
     const folders = folderResp.result.files;
+    let folderId = "";
     if (folders && folders.length > 0) {
-      log.push(`   FOUND: ${folders.length} folder(s).`);
-      folders.forEach((f: any) => log.push(`   - ID: ${f.id}, Name: ${f.name}`));
+      folderId = folders[0].id;
+      log.push(`   FOUND: ${folders.length} folder(s). ID: ${folderId}`);
     } else {
       log.push("   NOT FOUND: No 'Ouroboros' folder found.");
     }
 
-    // 2. Check LONG_TERM_MEMORY.json (Global - from old prompts)
-    log.push("2. Checking for legacy 'LONG_TERM_MEMORY.json' (Global)...");
-    const ltmResp = await window.gapi.client.drive.files.list({
-      q: "name = 'LONG_TERM_MEMORY.json' and trashed = false",
-      fields: "files(id, name, parents)",
-      spaces: 'drive'
-    });
-    const ltmFiles = ltmResp.result.files;
-    if (ltmFiles && ltmFiles.length > 0) {
-      log.push(`   FOUND: ${ltmFiles.length} file(s).`);
-      ltmFiles.forEach((f: any) => log.push(`   - ID: ${f.id}, Parents: ${JSON.stringify(f.parents)}`));
-    } else {
-      log.push("   NOT FOUND.");
-    }
+    if (folderId) {
+        log.push(`2. Checking for '${FILE_NAME}' in folder...`);
+        const appFileId = await findFileId(FILE_NAME, folderId);
+        log.push(appFileId ? `   FOUND: ID: ${appFileId}` : "   NOT FOUND.");
 
-    // 3. Check app-data.json (Global) - Current System File
-    log.push(`3. Checking for '${FILE_NAME}' (Global - Active System File)...`);
-    const appDataResp = await window.gapi.client.drive.files.list({
-      q: `name = '${FILE_NAME}' and trashed = false`,
-      fields: "files(id, name, parents)",
-      spaces: 'drive'
-    });
-    const appFiles = appDataResp.result.files;
-    if (appFiles && appFiles.length > 0) {
-      log.push(`   FOUND: ${appFiles.length} file(s).`);
-      appFiles.forEach((f: any) => log.push(`   - ID: ${f.id}, Parents: ${JSON.stringify(f.parents)}`));
-    } else {
-      log.push("   NOT FOUND.");
+        log.push(`3. Checking for '${BACKUP_FILE_NAME}' in folder...`);
+        const backupFileId = await findFileId(BACKUP_FILE_NAME, folderId);
+        log.push(backupFileId ? `   FOUND: ID: ${backupFileId}` : "   NOT FOUND.");
     }
     
     log.push("--- END REPORT ---");
@@ -279,19 +368,15 @@ export const runDiagnostics = async (): Promise<string> => {
 
 /**
  * Creates the app-data.json file explicitly inside the Ouroboros folder.
- * Used for recovery when the file is missing or misplaced.
  */
 export const performSurgicalInjection = async (): Promise<string> => {
   try {
     const folderId = await ensureFolderExists();
-    
-    // Check if it already exists correctly
-    const existingId = await findFileId(folderId);
+    const existingId = await findFileId(FILE_NAME, folderId);
     if (existingId) {
       return `File already exists in correct folder (ID: ${existingId}). No action taken.`;
     }
 
-    // Create the master payload
     const payload: AppData = {
       app_version: "1.0.0",
       last_sync_timestamp: Date.now(),
@@ -299,39 +384,8 @@ export const performSurgicalInjection = async (): Promise<string> => {
       focus: INITIAL_FOCUS
     };
 
-    const accessToken = window.gapi.client.getToken().access_token;
-    const url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
-    
-    const metadata = {
-      name: FILE_NAME,
-      mimeType: 'application/json',
-      parents: [folderId] // CRITICAL: Explicitly set parent
-    };
-
-    const multipartRequestBody =
-      `--foo_bar_baz\r\n` +
-      `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
-      `${JSON.stringify(metadata)}\r\n` +
-      `--foo_bar_baz\r\n` +
-      `Content-Type: application/json\r\n\r\n` +
-      `${JSON.stringify(payload, null, 2)}\r\n` +
-      `--foo_bar_baz--`;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'multipart/related; boundary=foo_bar_baz',
-      },
-      body: multipartRequestBody,
-    });
-
-    if (!response.ok) {
-      throw new Error(`Injection Failed: ${response.statusText}`);
-    }
-
-    const result = await response.json();
-    return `Minne återställt. Systemet är nu online och redo för GitHub-integration. (File ID: ${result.id})`;
+    const id = await createFile(FILE_NAME, payload, folderId, 'application/json');
+    return `Minne återställt. Systemet är nu online och redo för GitHub-integration. (File ID: ${id})`;
 
   } catch (err: any) {
     return `Critical Failure: ${err.message}`;
