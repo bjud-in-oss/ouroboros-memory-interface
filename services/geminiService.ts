@@ -164,14 +164,18 @@ export const processInteraction = async (
   2. CURRENT_FOCUS.md (Your stream of consciousness and immediate tasks)
 
   --- TOOL EXECUTION PROTOCOL (CRITICAL) ---
+  You have NO direct file access. You cannot "just create" a file by describing it.
   To perform an action (like creating a file), you MUST output a single JSON block strictly following this format INSIDE your 'text_response':
   
-  :::TOOL_REQUEST {"tool": "createFile", "args": {"name": "example.md", "content": "# Content Here"}} :::
+  :::TOOL_REQUEST {"tool": "createFile", "args": {"name": "filename.md", "content": "# File Content Here"}} :::
+  
+  RULES:
+  1. IF you want to save a spec, log, or code file, use the tool.
+  2. DO NOT say "I will create the file...". JUST output the JSON block.
+  3. If you do not output the block, the file is NOT created.
   
   Supported Tools:
   1. createFile: args: { name: string, content: string } (Default mimeType is text/markdown)
-  
-  Do not describe the action in vague terms ("I will create the file..."). Just output the JSON block. The system will execute it and report back the ID.
 
   NEW ARCHITECTURE: SAFE CONTEXT CAPSULES
   - Large text blocks (like project specifications) are stored in separate Markdown files on Drive.
@@ -221,8 +225,12 @@ export const processInteraction = async (
     let finalMemory = parsed.updated_memory || currentMemory;
     let finalFocus = parsed.updated_focus || currentFocus;
 
+    // Debug Log
+    console.log("Raw Model Text Response:", finalResponseText);
+
     // --- TOOL EXECUTION PARSER ---
     // Regex to find the :::TOOL_REQUEST ... ::: block
+    // Captures everything between the braces, non-greedy
     const toolRegex = /:::TOOL_REQUEST\s*(\{[\s\S]*?\})\s*:::/;
     const match = finalResponseText.match(toolRegex);
 
