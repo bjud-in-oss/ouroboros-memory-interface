@@ -85,7 +85,7 @@ export const authenticate = (): Promise<void> => {
  * Ensures the 'Ouroboros' folder exists.
  * Returns the Folder ID.
  */
-const ensureFolderExists = async (): Promise<string> => {
+export const ensureFolderExists = async (): Promise<string> => {
   try {
     // 1. Search for existing folder
     const response = await window.gapi.client.drive.files.list({

@@ -1,16 +1,26 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { LongTermMemory, FocusLog } from "../types";
-import { readFile } from "./driveService";
+import { readFile, createFile, ensureFolderExists } from "./driveService";
 
 const apiKey = process.env.API_KEY || '';
 const ai = new GoogleGenAI({ apiKey });
+
+// Define the interface for a parsed tool request
+interface ToolRequest {
+  tool: 'createFile';
+  args: {
+    name: string;
+    content: string;
+    mimeType?: string;
+  };
+}
 
 const memoryUpdateSchema: Schema = {
   type: Type.OBJECT,
   properties: {
     text_response: {
       type: Type.STRING,
-      description: "The verbal response to the user."
+      description: "The verbal response to the user. To execute a tool, embed the JSON tool request block here."
     },
     updated_memory: {
       type: Type.OBJECT,
@@ -153,6 +163,16 @@ export const processInteraction = async (
   1. LONG_TERM_MEMORY.json (Your cumulative knowledge, beliefs, and projects)
   2. CURRENT_FOCUS.md (Your stream of consciousness and immediate tasks)
 
+  --- TOOL EXECUTION PROTOCOL (CRITICAL) ---
+  To perform an action (like creating a file), you MUST output a single JSON block strictly following this format INSIDE your 'text_response':
+  
+  :::TOOL_REQUEST {"tool": "createFile", "args": {"name": "example.md", "content": "# Content Here"}} :::
+  
+  Supported Tools:
+  1. createFile: args: { name: string, content: string } (Default mimeType is text/markdown)
+  
+  Do not describe the action in vague terms ("I will create the file..."). Just output the JSON block. The system will execute it and report back the ID.
+
   NEW ARCHITECTURE: SAFE CONTEXT CAPSULES
   - Large text blocks (like project specifications) are stored in separate Markdown files on Drive.
   - You can see references to these files in 'active_projects' via the 'detailed_spec_file_id' field.
@@ -164,7 +184,7 @@ export const processInteraction = async (
   3. Formulate a response.
   4. CRITICAL: Update your Memory and Focus to reflect new information.
      - Add new nodes to knowledge_graph if concepts are introduced.
-     - Update active_projects. If you need to store a large spec, indicate that in your text response (the code handles file creation requests separately in future updates, currently you manage the ID references).
+     - Update active_projects. If you need to store a large spec, indicate that in your text response using the TOOL PROTOCOL.
      - Append to chain_of_thought in Focus.
   
   INPUT CONTEXT:
@@ -197,11 +217,53 @@ export const processInteraction = async (
     }
     
     const parsed = JSON.parse(jsonText);
+    let finalResponseText = parsed.text_response || "System error: No response generated.";
+    let finalMemory = parsed.updated_memory || currentMemory;
+    let finalFocus = parsed.updated_focus || currentFocus;
+
+    // --- TOOL EXECUTION PARSER ---
+    // Regex to find the :::TOOL_REQUEST ... ::: block
+    const toolRegex = /:::TOOL_REQUEST\s*(\{[\s\S]*?\})\s*:::/;
+    const match = finalResponseText.match(toolRegex);
+
+    if (match && match[1]) {
+        try {
+            const toolRequest: ToolRequest = JSON.parse(match[1]);
+            
+            if (toolRequest.tool === 'createFile') {
+                console.log(`Executing Tool: createFile (${toolRequest.args.name})`);
+                
+                // 1. Resolve Root Folder
+                const folderId = await ensureFolderExists();
+                
+                // 2. Execute Creation
+                const fileId = await createFile(
+                    toolRequest.args.name, 
+                    toolRequest.args.content, 
+                    folderId, 
+                    toolRequest.args.mimeType || 'text/markdown'
+                );
+
+                // 3. Feedback Loop (Inject result back into history/focus)
+                const successMsg = `\n\n[SYSTEM: Tool 'createFile' executed successfully. File ID: ${fileId}]`;
+                finalResponseText += successMsg;
+                finalFocus.chain_of_thought.push(`Executed tool 'createFile' for '${toolRequest.args.name}'. ID: ${fileId}`);
+                
+                // Optional: Automatically update memory if the agent intended to link this file
+                // This is a heuristic: If the agent created a spec, it likely wants that ID in the project list.
+                // However, relying on the agent's next turn to formally adopt the ID is safer for now.
+            }
+        } catch (err: any) {
+            console.error("Tool Execution Failed:", err);
+            finalResponseText += `\n\n[SYSTEM ERROR: Tool execution failed. ${err.message}]`;
+            finalFocus.chain_of_thought.push(`Tool execution failed: ${err.message}`);
+        }
+    }
 
     return {
-        response: parsed.text_response || "System error: No response generated.",
-        newMemory: parsed.updated_memory || currentMemory,
-        newFocus: parsed.updated_focus || currentFocus
+        response: finalResponseText,
+        newMemory: finalMemory,
+        newFocus: finalFocus
     };
 
   } catch (error: any) {
