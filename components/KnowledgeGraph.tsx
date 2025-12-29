@@ -13,8 +13,16 @@ const KnowledgeGraph: React.FC<Props> = ({ data }) => {
   useEffect(() => {
     if (!data || !svgRef.current || !wrapperRef.current) return;
 
-    const width = wrapperRef.current.clientWidth;
+    const width = wrapperRef.current.clientWidth || 600;
     const height = 400; // Fixed height for the panel
+
+    // CRITICAL: Clone the data to ensure D3 operates on local instances.
+    // This prevents mutation of the React state and ensures that forceLink
+    // resolves relations to the exact node objects currently being rendered.
+    // If we don't do this, re-renders can cause links to point to old node instances
+    // while circles render new ones, causing "disconnecting" visuals.
+    const nodes = data.nodes.map(d => ({ ...d })) as d3.SimulationNodeDatum[];
+    const edges = data.edges.map(d => ({ ...d })) as d3.SimulationLinkDatum<d3.SimulationNodeDatum>;
 
     // Clear previous
     d3.select(svgRef.current).selectAll("*").remove();
@@ -25,8 +33,8 @@ const KnowledgeGraph: React.FC<Props> = ({ data }) => {
       .attr("viewBox", [0, 0, width, height]);
 
     // Simulation setup
-    const simulation = d3.forceSimulation(data.nodes as d3.SimulationNodeDatum[])
-      .force("link", d3.forceLink(data.edges).id((d: any) => d.id).distance(100))
+    const simulation = d3.forceSimulation(nodes)
+      .force("link", d3.forceLink(edges).id((d: any) => d.id).distance(100))
       .force("charge", d3.forceManyBody().strength(-300))
       .force("center", d3.forceCenter(width / 2, height / 2))
       .force("collide", d3.forceCollide().radius(30));
@@ -37,7 +45,7 @@ const KnowledgeGraph: React.FC<Props> = ({ data }) => {
       .enter().append("marker")
       .attr("id", "arrow")
       .attr("viewBox", "0 -5 10 10")
-      .attr("refX", 25)
+      .attr("refX", 18) // Adjusted for node radius
       .attr("refY", 0)
       .attr("markerWidth", 6)
       .attr("markerHeight", 6)
@@ -49,7 +57,7 @@ const KnowledgeGraph: React.FC<Props> = ({ data }) => {
     // Edges
     const link = svg.append("g")
       .selectAll("line")
-      .data(data.edges)
+      .data(edges)
       .join("line")
       .attr("stroke", "#4b5563") // gray-600
       .attr("stroke-opacity", 0.6)
@@ -59,7 +67,7 @@ const KnowledgeGraph: React.FC<Props> = ({ data }) => {
     // Nodes
     const node = svg.append("g")
       .selectAll("g")
-      .data(data.nodes)
+      .data(nodes)
       .join("g")
       .call(d3.drag<any, any>()
         .on("start", (event, d) => {
@@ -106,7 +114,7 @@ const KnowledgeGraph: React.FC<Props> = ({ data }) => {
     // Edge Labels (Relations)
     const edgeLabel = svg.append("g")
         .selectAll("text")
-        .data(data.edges)
+        .data(edges)
         .join("text")
         .text((d: any) => d.relation)
         .attr("font-size", "8px")
@@ -127,6 +135,11 @@ const KnowledgeGraph: React.FC<Props> = ({ data }) => {
         .attr("x", (d: any) => (d.source.x + d.target.x) / 2)
         .attr("y", (d: any) => (d.source.y + d.target.y) / 2);
     });
+    
+    // Cleanup simulation on unmount
+    return () => {
+        simulation.stop();
+    };
 
   }, [data]);
 
