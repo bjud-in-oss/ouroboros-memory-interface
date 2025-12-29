@@ -215,6 +215,67 @@ export const loadState = async (): Promise<AppData | null> => {
   return response.result as AppData;
 };
 
+/**
+ * Diagnostic tool to inspect the Drive state.
+ * Reports on the existence of the folder and critical files.
+ */
+export const runDiagnostics = async (): Promise<string> => {
+  const log = [];
+  try {
+    // 1. Check Folder
+    log.push("--- DIAGNOSTIC REPORT ---");
+    log.push("1. Checking for 'Ouroboros' Folder...");
+    const folderResp = await window.gapi.client.drive.files.list({
+      q: `mimeType = 'application/vnd.google-apps.folder' and name = '${FOLDER_NAME}' and trashed = false`,
+      fields: "files(id, name, parents)",
+      spaces: 'drive'
+    });
+    const folders = folderResp.result.files;
+    if (folders && folders.length > 0) {
+      log.push(`   FOUND: ${folders.length} folder(s).`);
+      folders.forEach((f: any) => log.push(`   - ID: ${f.id}, Name: ${f.name}`));
+    } else {
+      log.push("   NOT FOUND: No 'Ouroboros' folder found.");
+    }
+
+    // 2. Check LONG_TERM_MEMORY.json (Global - from old prompts)
+    log.push("2. Checking for legacy 'LONG_TERM_MEMORY.json' (Global)...");
+    const ltmResp = await window.gapi.client.drive.files.list({
+      q: "name = 'LONG_TERM_MEMORY.json' and trashed = false",
+      fields: "files(id, name, parents)",
+      spaces: 'drive'
+    });
+    const ltmFiles = ltmResp.result.files;
+    if (ltmFiles && ltmFiles.length > 0) {
+      log.push(`   FOUND: ${ltmFiles.length} file(s).`);
+      ltmFiles.forEach((f: any) => log.push(`   - ID: ${f.id}, Parents: ${JSON.stringify(f.parents)}`));
+    } else {
+      log.push("   NOT FOUND.");
+    }
+
+    // 3. Check app-data.json (Global) - Current System File
+    log.push(`3. Checking for '${FILE_NAME}' (Global - Active System File)...`);
+    const appDataResp = await window.gapi.client.drive.files.list({
+      q: `name = '${FILE_NAME}' and trashed = false`,
+      fields: "files(id, name, parents)",
+      spaces: 'drive'
+    });
+    const appFiles = appDataResp.result.files;
+    if (appFiles && appFiles.length > 0) {
+      log.push(`   FOUND: ${appFiles.length} file(s).`);
+      appFiles.forEach((f: any) => log.push(`   - ID: ${f.id}, Parents: ${JSON.stringify(f.parents)}`));
+    } else {
+      log.push("   NOT FOUND.");
+    }
+    
+    log.push("--- END REPORT ---");
+    return log.join("\n");
+
+  } catch (err: any) {
+    return `Diagnostic Error: ${err.message}`;
+  }
+};
+
 declare global {
   interface Window {
     gapi: any;

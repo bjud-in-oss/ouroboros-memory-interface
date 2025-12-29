@@ -5,7 +5,7 @@ import { processInteraction } from './services/geminiService';
 import * as driveService from './services/driveService';
 import MemoryPanel from './components/MemoryPanel';
 import FocusPanel from './components/FocusPanel';
-import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn } from 'lucide-react';
+import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Bug } from 'lucide-react';
 
 const App: React.FC = () => {
   // --- State ---
@@ -90,6 +90,16 @@ const App: React.FC = () => {
     }
   };
 
+  const handleDiagnostics = async () => {
+    if (!isDriveConnected) {
+        setMessages(prev => [...prev, { role: 'system', content: 'Connect to Drive to run diagnostics.', timestamp: Date.now() }]);
+        return;
+    }
+    setMessages(prev => [...prev, { role: 'system', content: 'Running System Diagnostics...', timestamp: Date.now() }]);
+    const report = await driveService.runDiagnostics();
+    setMessages(prev => [...prev, { role: 'system', content: report, timestamp: Date.now() }]);
+  };
+
   const handleSendMessage = async () => {
     if (!input.trim() || isLoading) return;
 
@@ -162,14 +172,25 @@ const App: React.FC = () => {
                     </div>
                 </div>
             </div>
-            {!isDriveConnected && (
-                <button 
-                    onClick={handleConnectDrive}
-                    className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-xs px-3 py-1.5 rounded-md transition-colors border border-zinc-700"
-                >
-                    <LogIn size={12} /> Connect
-                </button>
-            )}
+            <div className="flex gap-2">
+                {isDriveConnected && (
+                    <button 
+                        onClick={handleDiagnostics}
+                        className="p-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white rounded-md transition-colors border border-zinc-700"
+                        title="Run System Diagnostics"
+                    >
+                        <Bug size={14} />
+                    </button>
+                )}
+                {!isDriveConnected && (
+                    <button 
+                        onClick={handleConnectDrive}
+                        className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-xs px-3 py-1.5 rounded-md transition-colors border border-zinc-700"
+                    >
+                        <LogIn size={12} /> Connect
+                    </button>
+                )}
+            </div>
         </div>
 
         {/* Chat Messages */}
@@ -180,7 +201,7 @@ const App: React.FC = () => {
                         msg.role === 'user' 
                             ? 'bg-zinc-800 text-zinc-100 rounded-tr-none' 
                             : msg.role === 'system'
-                            ? 'bg-red-900/20 text-red-400 border border-red-900/30 text-xs font-mono w-full text-center'
+                            ? 'bg-red-900/20 text-red-400 border border-red-900/30 text-xs font-mono w-full whitespace-pre-wrap'
                             : 'bg-[#18181b] border border-zinc-800 text-zinc-300 rounded-tl-none'
                     }`}>
                         {msg.content}
