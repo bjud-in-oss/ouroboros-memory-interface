@@ -1,9 +1,33 @@
 import React, { useEffect, useRef } from 'react';
-import * as d3 from 'd3';
+import { 
+  select, 
+  forceSimulation, 
+  forceLink, 
+  forceManyBody, 
+  forceCenter, 
+  forceCollide, 
+  drag 
+} from 'd3';
 import { KnowledgeGraph as GraphData, KnowledgeNode, KnowledgeEdge } from '../types';
 
 interface Props {
   data: GraphData;
+}
+
+// Define D3 types locally to avoid namespace import issues
+interface SimulationNode extends KnowledgeNode {
+  index?: number;
+  x?: number;
+  y?: number;
+  vx?: number;
+  vy?: number;
+  fx?: number | null;
+  fy?: number | null;
+}
+
+interface SimulationLink extends Omit<KnowledgeEdge, 'source' | 'target'> {
+  source: string | SimulationNode;
+  target: string | SimulationNode;
 }
 
 const KnowledgeGraph: React.FC<Props> = ({ data }) => {
@@ -11,33 +35,41 @@ const KnowledgeGraph: React.FC<Props> = ({ data }) => {
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!data || !svgRef.current || !wrapperRef.current) return;
+    // Validate required refs and data
+    if (!svgRef.current || !wrapperRef.current) return;
+
+    // Defensive: data might be partially defined or null
+    const rawNodes = data?.nodes || [];
+    const rawEdges = data?.edges || [];
 
     const width = wrapperRef.current.clientWidth || 600;
     const height = 400; // Fixed height for the panel
 
     // CRITICAL: Clone the data to ensure D3 operates on local instances.
-    // This prevents mutation of the React state and ensures that forceLink
-    // resolves relations to the exact node objects currently being rendered.
-    // If we don't do this, re-renders can cause links to point to old node instances
-    // while circles render new ones, causing "disconnecting" visuals.
-    const nodes = data.nodes.map(d => ({ ...d })) as d3.SimulationNodeDatum[];
-    const edges = data.edges.map(d => ({ ...d })) as d3.SimulationLinkDatum<d3.SimulationNodeDatum>;
+    const nodes = rawNodes.map(d => ({ ...d })) as SimulationNode[];
+    // We cast to any[] initially because D3 expects the links to eventually contain Node references, 
+    // but they start as strings.
+    const edges = rawEdges.map(d => ({ ...d })) as unknown as SimulationLink[];
 
     // Clear previous
-    d3.select(svgRef.current).selectAll("*").remove();
+    select(svgRef.current).selectAll("*").remove();
 
-    const svg = d3.select(svgRef.current)
+    // If no data, just clear and return (or show a placeholder if desired)
+    if (nodes.length === 0) {
+        return;
+    }
+
+    const svg = select(svgRef.current)
       .attr("width", width)
       .attr("height", height)
       .attr("viewBox", [0, 0, width, height]);
 
     // Simulation setup
-    const simulation = d3.forceSimulation(nodes)
-      .force("link", d3.forceLink(edges).id((d: any) => d.id).distance(100))
-      .force("charge", d3.forceManyBody().strength(-300))
-      .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("collide", d3.forceCollide().radius(30));
+    const simulation = forceSimulation<SimulationNode>(nodes)
+      .force("link", forceLink<SimulationNode, SimulationLink>(edges).id((d: any) => d.id).distance(100))
+      .force("charge", forceManyBody().strength(-300))
+      .force("center", forceCenter(width / 2, height / 2))
+      .force("collide", forceCollide().radius(30));
 
     // Arrow marker
     svg.append("defs").selectAll("marker")
@@ -69,7 +101,7 @@ const KnowledgeGraph: React.FC<Props> = ({ data }) => {
       .selectAll("g")
       .data(nodes)
       .join("g")
-      .call(d3.drag<any, any>()
+      .call(drag<any, SimulationNode>()
         .on("start", (event, d) => {
           if (!event.active) simulation.alphaTarget(0.3).restart();
           d.fx = d.x;
@@ -123,17 +155,17 @@ const KnowledgeGraph: React.FC<Props> = ({ data }) => {
 
     simulation.on("tick", () => {
       link
-        .attr("x1", (d: any) => d.source.x)
-        .attr("y1", (d: any) => d.source.y)
-        .attr("x2", (d: any) => d.target.x)
-        .attr("y2", (d: any) => d.target.y);
+        .attr("x1", (d: any) => (d.source as SimulationNode).x!)
+        .attr("y1", (d: any) => (d.source as SimulationNode).y!)
+        .attr("x2", (d: any) => (d.target as SimulationNode).x!)
+        .attr("y2", (d: any) => (d.target as SimulationNode).y!);
 
       node
         .attr("transform", (d: any) => `translate(${d.x},${d.y})`);
         
       edgeLabel
-        .attr("x", (d: any) => (d.source.x + d.target.x) / 2)
-        .attr("y", (d: any) => (d.source.y + d.target.y) / 2);
+        .attr("x", (d: any) => ((d.source as SimulationNode).x! + (d.target as SimulationNode).x!) / 2)
+        .attr("y", (d: any) => ((d.source as SimulationNode).y! + (d.target as SimulationNode).y!) / 2);
     });
     
     // Cleanup simulation on unmount
@@ -148,6 +180,11 @@ const KnowledgeGraph: React.FC<Props> = ({ data }) => {
         <div className="absolute top-2 left-2 text-xs text-zinc-500 font-mono z-10 pointer-events-none">
             D3.js Visualization
         </div>
+        {(!data?.nodes || data.nodes.length === 0) && (
+             <div className="absolute inset-0 flex items-center justify-center text-zinc-600 text-xs font-mono z-0">
+                 No Graph Data
+             </div>
+        )}
       <svg ref={svgRef} className="w-full h-full block"></svg>
     </div>
   );
