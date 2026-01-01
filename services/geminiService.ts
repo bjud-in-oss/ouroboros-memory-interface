@@ -84,12 +84,13 @@ export const processInteraction = async (userPrompt: string, currentMemory: Long
 
   --- RULES FOR STATE PRESERVATION ---
   1. NEVER truncate the 'active_projects' or 'core_instructions' arrays. 
-  2. If you are focused on a task, update 'chain_of_thought', but keep all other data intact.
-  3. All fields defined in the schema are MANDATORY.
+  2. If you are focused on a task, update 'chain_of_thought', but keep ALL other data intact.
+  3. Every single field defined in the response schema is MANDATORY.
 
   --- TOOLS ---
   To act, embed this block in 'text_response': :::TOOL_REQUEST {"tool": "toolName", "args": {...}} :::
   - findFile: args: { name: string } -> Returns the File ID if found.
+  - createFile: args: { name: string, content: string }
   
   INPUT:
   Memory: ${JSON.stringify(currentMemory)}
@@ -107,23 +108,24 @@ export const processInteraction = async (userPrompt: string, currentMemory: Long
 
   const parsed = JSON.parse(response.text || "{}");
   
-  // --- SELF-PRESERVATION CHECK ---
+  // --- SELF-PRESERVATION INTEGRITY CHECK ---
   const newMemory = parsed.updated_memory;
-  const currentProjCount = currentMemory.active_projects?.length || 0;
-  const newProjCount = newMemory.active_projects?.length || 0;
+  const currentCount = currentMemory.active_projects?.length || 0;
+  const newCount = newMemory.active_projects?.length || 0;
 
-  if (!newMemory.active_projects || !newMemory.core_instructions || newProjCount < currentProjCount) {
-      throw new Error("Neural interface attempted to truncate critical memory. State update blocked for integrity.");
+  // Block save if memory is clearly truncated (missing projects or instructions)
+  if (!newMemory.active_projects || !newMemory.core_instructions || (currentCount > 0 && newCount === 0)) {
+      throw new Error("Neural integrity check failed: Critical memory structures missing from response. Update aborted.");
   }
 
   let finalResponseText = parsed.text_response;
   let finalMemory = newMemory;
   let finalFocus = parsed.updated_focus;
 
-  const toolRegex = /:::TOOL_REQUEST\s*(\{[\s\S]*?\})\s*:::/;
-  const match = finalResponseText.match(toolRegex);
-
-  if (match && match[1]) {
+  // Handle multiple tool requests if present
+  const toolRegex = /:::TOOL_REQUEST\s*(\{[\s\S]*?\})\s*:::/g;
+  let match;
+  while ((match = toolRegex.exec(finalResponseText)) !== null) {
     try {
       const tr: ToolRequest = JSON.parse(match[1]);
       const folderId = await ensureFolderExists();
@@ -133,10 +135,10 @@ export const processInteraction = async (userPrompt: string, currentMemory: Long
         finalResponseText += `\n\n[SYSTEM: File created. ID: ${id}]`;
       } else if (tr.tool === 'findFile') {
         const id = await findFile(tr.args.name);
-        finalResponseText += `\n\n[SYSTEM: File search complete. ID: ${id || 'NOT_FOUND'}]`;
+        finalResponseText += `\n\n[SYSTEM: File search for '${tr.args.name}' complete. ID: ${id || 'NOT_FOUND'}]`;
       }
     } catch (e: any) {
-      finalResponseText += `\n\n[SYSTEM ERROR: ${e.message}]`;
+      finalResponseText += `\n\n[SYSTEM ERROR executing tool: ${e.message}]`;
     }
   }
 

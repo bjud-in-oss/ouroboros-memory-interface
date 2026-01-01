@@ -1,7 +1,8 @@
+
 export interface KnowledgeNode {
   id: string;
   label: string;
-  type: 'concept' | 'entity' | 'project' | 'truth' | 'infrastructure' | 'constraint';
+  type: string; // Made flexible to support various semantic categories like 'architecture', 'process', etc.
 }
 
 export interface KnowledgeEdge {
@@ -18,7 +19,8 @@ export interface KnowledgeGraph {
 export interface Project {
   id: string;
   name: string;
-  status: 'active' | 'pending' | 'completed' | 'archived';
+  // Fix: Added 'published' to the status union to fix the type mismatch with initial data in constants.ts
+  status: 'active' | 'pending' | 'completed' | 'archived' | 'published';
   description: string;
   detailed_spec_file_id?: string;
 }
@@ -49,10 +51,6 @@ export interface OuroborosState {
   focus: FocusLog;
 }
 
-/**
- * The master data structure stored in Google Drive as 'app-data.json'.
- * This encapsulates the entire persistent state of the agent.
- */
 export interface AppData {
   app_version: string;
   last_sync_timestamp: number;

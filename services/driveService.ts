@@ -194,3 +194,10 @@ export const runDiagnostics = async (): Promise<string> => {
     return `Diagnostic: Folder OK (${folderId}), AppData: ${appFileId || 'Not Found'}`;
   } catch (err: any) { return `Error: ${err.message}`; }
 };
+
+export const performSurgicalInjection = async (): Promise<string> => {
+  const folderId = await ensureFolderExists();
+  const payload: AppData = { app_version: "1.3.0", last_sync_timestamp: Date.now(), memory: INITIAL_MEMORY, focus: INITIAL_FOCUS };
+  const id = await createFile(FILE_NAME, payload, folderId, 'application/json');
+  return `Injection successful: ${id}`;
+};
