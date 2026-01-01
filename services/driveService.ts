@@ -118,7 +118,8 @@ export const createFile = async (name: string, content: string | object, folderI
   try {
     const metadata = { name, mimeType, parents: [folderId] };
     const accessToken = (window as any).gapi.client.getToken().access_token;
-    const bodyContent = typeof content === 'object' ? JSON.stringify(content) : content;
+    // Updated to include indentation for JSON objects
+    const bodyContent = typeof content === 'object' ? JSON.stringify(content, null, 2) : content;
     const multipartRequestBody = `--foo_bar_baz\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--foo_bar_baz\r\nContent-Type: ${mimeType}\r\n\r\n${bodyContent}\r\n--foo_bar_baz--`;
     const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
       method: 'POST',
@@ -154,7 +155,8 @@ export const saveState = async (data: AppData, isBackup: boolean = false): Promi
     metadata.parents = [folderId];
   }
 
-  const bodyContent = JSON.stringify(data);
+  // Updated to include indentation (2 spaces) to match local download behavior
+  const bodyContent = JSON.stringify(data, null, 2);
   const multipartRequestBody = `--foo_bar_baz\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--foo_bar_baz\r\nContent-Type: application/json\r\n\r\n${bodyContent}\r\n--foo_bar_baz--`;
 
   const response = await fetch(url, {
