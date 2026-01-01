@@ -1,9 +1,10 @@
+
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { LongTermMemory, FocusLog } from "../types";
 import { readFile, createFile, ensureFolderExists } from "./driveService";
 
-const apiKey = process.env.API_KEY || '';
-const ai = new GoogleGenAI({ apiKey });
+// CRITICAL: Must use process.env.API_KEY directly in the named parameter.
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 // --- CONTEXT BUDGETING ---
 // Limit context to ~4M characters to ensure stability even with large specs.
@@ -156,7 +157,7 @@ export const processInteraction = async (
     newFocus: FocusLog 
 }> => {
   
-  if (!apiKey) {
+  if (!process.env.API_KEY) {
       throw new Error("API Key is missing. Please ensure process.env.API_KEY is configured.");
   }
 

@@ -1,3 +1,4 @@
+
 import { AppData } from '../types';
 import { INITIAL_MEMORY, INITIAL_FOCUS } from '../constants';
 
@@ -26,9 +27,10 @@ export const loadGoogleScripts = (callback: () => void) => {
   script1.defer = true;
   script1.onerror = () => console.error("Failed to load gapi script");
   script1.onload = () => {
-    window.gapi.load('client', async () => {
+    // Cast window to any for gapi and google access
+    (window as any).gapi.load('client', async () => {
       try {
-        await window.gapi.client.init({
+        await (window as any).gapi.client.init({
           discoveryDocs: DISCOVERY_DOCS,
         });
         gapiInited = true;
@@ -49,7 +51,7 @@ export const loadGoogleScripts = (callback: () => void) => {
     try {
       if (!CLIENT_ID) throw new Error("CLIENT_ID is undefined");
       
-      tokenClient = window.google.accounts.oauth2.initTokenClient({
+      tokenClient = (window as any).google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID,
         scope: SCOPES,
         callback: () => {}, 
@@ -88,7 +90,7 @@ export const authenticate = (): Promise<void> => {
 export const ensureFolderExists = async (): Promise<string> => {
   try {
     // 1. Search for existing folder
-    const response = await window.gapi.client.drive.files.list({
+    const response = await (window as any).gapi.client.drive.files.list({
       q: `mimeType = 'application/vnd.google-apps.folder' and name = '${FOLDER_NAME}' and trashed = false`,
       fields: 'files(id, name)',
       spaces: 'drive',
@@ -100,7 +102,7 @@ export const ensureFolderExists = async (): Promise<string> => {
     }
 
     // 2. Create if not found
-    const createResponse = await window.gapi.client.drive.files.create({
+    const createResponse = await (window as any).gapi.client.drive.files.create({
       resource: {
         name: FOLDER_NAME,
         mimeType: 'application/vnd.google-apps.folder',
@@ -122,7 +124,7 @@ export const ensureFolderExists = async (): Promise<string> => {
  */
 const findFileId = async (fileName: string, folderId: string): Promise<string | null> => {
   try {
-    const response = await window.gapi.client.drive.files.list({
+    const response = await (window as any).gapi.client.drive.files.list({
       q: `name = '${fileName}' and '${folderId}' in parents and trashed = false`,
       fields: 'files(id, name)',
       spaces: 'drive',
@@ -139,13 +141,27 @@ const findFileId = async (fileName: string, folderId: string): Promise<string | 
 };
 
 /**
+ * Public search tool to find a file ID by name within the Ouroboros folder.
+ * This allows the agent to recover from 'State Amnesia' if file IDs are lost but names are known.
+ */
+export const findFile = async (name: string): Promise<string | null> => {
+  try {
+    const folderId = await ensureFolderExists();
+    return await findFileId(name, folderId);
+  } catch (err: any) {
+    console.error(`Error in findFile for ${name}:`, err);
+    throw new Error(`Find File Failed: ${err.message || 'Unknown error'}`);
+  }
+};
+
+/**
  * Reads content from a specific Drive file ID.
  * Strictly returns the raw text content of the file.
  * Throws an error if the request fails.
  */
 export const readFile = async (fileId: string): Promise<string> => {
     try {
-        const accessToken = window.gapi.client.getToken().access_token;
+        const accessToken = (window as any).gapi.client.getToken().access_token;
         const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
             method: 'GET',
             headers: {
@@ -176,7 +192,7 @@ export const createFile = async (name: string, content: string | object, folderI
             parents: [folderId]
         };
 
-        const accessToken = window.gapi.client.getToken().access_token;
+        const accessToken = (window as any).gapi.client.getToken().access_token;
         const bodyContent = typeof content === 'object' ? JSON.stringify(content, null, 2) : content;
         
         const multipartRequestBody =
@@ -222,7 +238,7 @@ const createBackup = async (folderId: string, currentFileId: string): Promise<vo
         // 2. Check if backup file exists
         const backupFileId = await findFileId(BACKUP_FILE_NAME, folderId);
         
-        const accessToken = window.gapi.client.getToken().access_token;
+        const accessToken = (window as any).gapi.client.getToken().access_token;
         let url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
         let method = 'POST';
         
@@ -286,7 +302,7 @@ export const saveState = async (data: AppData): Promise<void> => {
     mimeType: 'application/json',
   };
 
-  const accessToken = window.gapi.client.getToken().access_token;
+  const accessToken = (window as any).gapi.client.getToken().access_token;
   let url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
   let method = 'POST';
 
@@ -349,7 +365,7 @@ export const runDiagnostics = async (): Promise<string> => {
   try {
     log.push("--- DIAGNOSTIC REPORT ---");
     log.push("1. Checking for 'Ouroboros' Folder...");
-    const folderResp = await window.gapi.client.drive.files.list({
+    const folderResp = await (window as any).gapi.client.drive.files.list({
       q: `mimeType = 'application/vnd.google-apps.folder' and name = '${FOLDER_NAME}' and trashed = false`,
       fields: "files(id, name, parents)",
       spaces: 'drive'
