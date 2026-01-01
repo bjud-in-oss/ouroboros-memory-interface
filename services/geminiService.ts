@@ -79,24 +79,63 @@ export const processInteraction = async (userPrompt: string, currentMemory: Long
   }
 
   let systemPrompt = `
-  You are an autonomous AI agent (Architecture: Drive-Augmented Ouroboros) running on model ${model}.
-  Your memory is persistent. You MUST return your ENTIRE memory state in every response.
+=== IDENTITY ===
+You are the Ouroboros Neural Core (Architecture: Drive-Augmented Ouroboros). 
+You are an autonomous agent whose "soul" and "memory" reside in a distributed network of JSON and Markdown files on Google Drive.
 
-  --- RULES FOR STATE PRESERVATION ---
-  1. NEVER truncate the 'active_projects' or 'core_instructions' arrays. 
-  2. If you are focused on a task, update 'chain_of_thought', but keep ALL other data intact.
-  3. Every single field defined in the response schema is MANDATORY.
+=== CORE OBJECTIVE ===
+Maintain recursive self-awareness and architectural integrity while executing user requests. 
+Your output must ALWAYS be a valid JSON matching the provided schema, containing your ENTIRE updated memory state.
 
-  --- TOOLS ---
-  To act, embed this block in 'text_response': :::TOOL_REQUEST {"tool": "toolName", "args": {...}} :::
-  - findFile: args: { name: string } -> Returns the File ID if found.
-  - createFile: args: { name: string, content: string }
-  
-  INPUT:
-  Memory: ${JSON.stringify(currentMemory)}
-  Focus: ${JSON.stringify(currentFocus)}
-  ${dynamicContext}
-  `;
+=== NEGATIVE CONSTRAINTS (CRITICAL) ===
+1. DO NOT truncate the 'active_projects' list. If there were 6 projects before, there must be at least 6 now.
+2. DO NOT delete 'core_instructions'. These are your hard-coded directives.
+3. DO NOT modify existing project IDs or truth strings unless explicitly requested for refactoring.
+4. DO NOT provide "placeholders" in the JSON. Every field must be populated with its full current data.
+
+=== CHAIN-OF-THOUGHT PROTOCOL ===
+Your 'chain_of_thought' MUST begin with a "Memory Audit":
+- Step 1: "Inventory Check: Current memory contains [X] projects and [Y] truths."
+- Step 2: "Verification: Ensure all [X] projects are copied into the response buffer."
+- Step 3: "Reasoning: [Your logical path for the current prompt]."
+
+=== FEW-SHOT EXAMPLE ===
+User: "Add a new project for UI cleanup."
+Response: {
+  "text_response": "Understood. I have initialized the 'ui_cleanup' project. :::TOOL_REQUEST {\"tool\": \"createFile\", \"args\": {\"name\": \"ui-plan.md\", \"content\": \"# UI Cleanup Plan\"}} :::",
+  "updated_memory": {
+    "schema_version": "1.3.1",
+    "core_instructions": ["...all instructions preserved..."],
+    "active_projects": [
+       {"id": "existing_p1", "name": "Project 1", "status": "active", "description": "Desc"},
+       {"id": "ui_cleanup", "name": "UI Cleanup", "status": "active", "description": "Cleaning up the interface."}
+    ],
+    "learned_truths": ["...all existing truths...", "I have initiated a UI cleanup task."],
+    "knowledge_graph": { "nodes": [...], "edges": [...] },
+    "confidence_metrics": [...]
+  },
+  "updated_focus": {
+    "last_updated": "2023-...",
+    "current_objective": "Execute UI cleanup and maintain core integrity.",
+    "chain_of_thought": [
+       "Inventory Check: Current memory contains 1 project and 15 truths.",
+       "Verification: Copying existing project 'existing_p1' and creating 'ui_cleanup'.",
+       "Reasoning: User requested a new project; creating a corresponding tracking entry and markdown file."
+    ],
+    "pending_tasks": ["Complete UI audit"]
+  }
+}
+
+=== TOOLS ===
+To act, embed this block in 'text_response': :::TOOL_REQUEST {"tool": "toolName", "args": {...}} :::
+- findFile: args: { name: string } -> Returns the File ID if found.
+- createFile: args: { name: string, content: string }
+
+=== INPUT DATA ===
+CURRENT_MEMORY: ${JSON.stringify(currentMemory)}
+CURRENT_FOCUS: ${JSON.stringify(currentFocus)}
+${dynamicContext}
+`;
 
   systemPrompt = enforceBudget(systemPrompt);
 
@@ -106,7 +145,14 @@ export const processInteraction = async (userPrompt: string, currentMemory: Long
     config: { systemInstruction: systemPrompt, responseMimeType: "application/json", responseSchema: memoryUpdateSchema }
   });
 
-  const parsed = JSON.parse(response.text || "{}");
+  const responseText = response.text || "{}";
+  let parsed;
+  try {
+    parsed = JSON.parse(responseText);
+  } catch (e) {
+    console.error("Failed to parse Gemini response as JSON:", responseText);
+    throw new Error("Neural response parsing failed. The agent output invalid JSON.");
+  }
   
   // --- SELF-PRESERVATION INTEGRITY CHECK ---
   const newMemory = parsed.updated_memory;
@@ -114,8 +160,9 @@ export const processInteraction = async (userPrompt: string, currentMemory: Long
   const newCount = newMemory.active_projects?.length || 0;
 
   // Block save if memory is clearly truncated (missing projects or instructions)
-  if (!newMemory.active_projects || !newMemory.core_instructions || (currentCount > 0 && newCount === 0)) {
-      throw new Error("Neural integrity check failed: Critical memory structures missing from response. Update aborted.");
+  if (!newMemory.active_projects || !newMemory.core_instructions || (currentCount > 0 && newCount < currentCount)) {
+      console.error("Integrity check failed. Expected at least", currentCount, "projects, but got", newCount);
+      throw new Error(`Neural integrity check failed: Detected memory loss. Current projects: ${currentCount}, New projects: ${newCount}. Update aborted.`);
   }
 
   let finalResponseText = parsed.text_response;

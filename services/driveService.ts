@@ -79,10 +79,11 @@ export const ensureFolderExists = async (): Promise<string> => {
   }
 };
 
-const findFileId = async (fileName: string, folderId: string): Promise<string | null> => {
+const findFileId = async (fileName: string, folderId: string, partial: boolean = false): Promise<string | null> => {
   try {
+    const operator = partial ? 'contains' : '=';
     const response = await (window as any).gapi.client.drive.files.list({
-      q: `name = '${fileName}' and '${folderId}' in parents and trashed = false`,
+      q: `name ${operator} '${fileName}' and '${folderId}' in parents and trashed = false`,
       fields: 'files(id, name)',
       spaces: 'drive',
     });
@@ -118,7 +119,6 @@ export const createFile = async (name: string, content: string | object, folderI
   try {
     const metadata = { name, mimeType, parents: [folderId] };
     const accessToken = (window as any).gapi.client.getToken().access_token;
-    // Updated to include indentation for JSON objects
     const bodyContent = typeof content === 'object' ? JSON.stringify(content, null, 2) : content;
     const multipartRequestBody = `--foo_bar_baz\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--foo_bar_baz\r\nContent-Type: ${mimeType}\r\n\r\n${bodyContent}\r\n--foo_bar_baz--`;
     const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
@@ -155,7 +155,6 @@ export const saveState = async (data: AppData, isBackup: boolean = false): Promi
     metadata.parents = [folderId];
   }
 
-  // Updated to include indentation (2 spaces) to match local download behavior
   const bodyContent = JSON.stringify(data, null, 2);
   const multipartRequestBody = `--foo_bar_baz\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--foo_bar_baz\r\nContent-Type: application/json\r\n\r\n${bodyContent}\r\n--foo_bar_baz--`;
 
@@ -185,7 +184,8 @@ export const loadState = async (fileId?: string): Promise<AppData | null> => {
 export const findFile = async (name: string): Promise<string | null> => {
   try {
     const folderId = await ensureFolderExists();
-    return await findFileId(name, folderId);
+    // Use the 'contains' operator for fuzzy/partial matching as requested
+    return await findFileId(name, folderId, true);
   } catch (err) { return null; }
 };
 
