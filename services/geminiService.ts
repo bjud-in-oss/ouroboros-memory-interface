@@ -45,10 +45,12 @@ const memoryUpdateSchema: Schema = {
             properties: {
                 nodes: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { id: { type: Type.STRING }, label: { type: Type.STRING }, type: { type: Type.STRING } } } },
                 edges: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { source: { type: Type.STRING }, target: { type: Type.STRING }, relation: { type: Type.STRING } } } }
-            }
+            },
+            required: ["nodes", "edges"]
         },
         confidence_metrics: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { label: { type: Type.STRING }, score: { type: Type.NUMBER } } } }
-      }
+      },
+      required: ["schema_version", "core_instructions", "active_projects", "learned_truths", "knowledge_graph", "confidence_metrics"]
     },
     updated_focus: {
         type: Type.OBJECT,
@@ -57,7 +59,8 @@ const memoryUpdateSchema: Schema = {
             current_objective: { type: Type.STRING },
             chain_of_thought: { type: Type.ARRAY, items: { type: Type.STRING } },
             pending_tasks: { type: Type.ARRAY, items: { type: Type.STRING } }
-        }
+        },
+        required: ["last_updated", "current_objective", "chain_of_thought", "pending_tasks"]
     }
   },
   required: ["text_response", "updated_memory", "updated_focus"]
@@ -77,15 +80,16 @@ export const processInteraction = async (userPrompt: string, currentMemory: Long
 
   let systemPrompt = `
   You are an autonomous AI agent (Architecture: Drive-Augmented Ouroboros) running on model ${model}.
-  Your memory is stored in LONG_TERM_MEMORY.json and CURRENT_FOCUS.md on Google Drive.
+  Your memory is persistent. You MUST return your ENTIRE memory state in every response.
+
+  --- RULES FOR STATE PRESERVATION ---
+  1. NEVER truncate the 'active_projects' or 'core_instructions' arrays. 
+  2. If you are focused on a task, update 'chain_of_thought', but keep all other data intact.
+  3. All fields defined in the schema are MANDATORY.
 
   --- TOOLS ---
   To act, embed this block in 'text_response': :::TOOL_REQUEST {"tool": "toolName", "args": {...}} :::
-  
-  1. createFile: args: { name: string, content: string }
-  2. findFile: args: { name: string } -> Returns the File ID in the system response if found.
-
-  If you lose a File ID but know the name, use 'findFile' to recover it.
+  - findFile: args: { name: string } -> Returns the File ID if found.
   
   INPUT:
   Memory: ${JSON.stringify(currentMemory)}
@@ -102,8 +106,18 @@ export const processInteraction = async (userPrompt: string, currentMemory: Long
   });
 
   const parsed = JSON.parse(response.text || "{}");
+  
+  // --- SELF-PRESERVATION CHECK ---
+  const newMemory = parsed.updated_memory;
+  const currentProjCount = currentMemory.active_projects?.length || 0;
+  const newProjCount = newMemory.active_projects?.length || 0;
+
+  if (!newMemory.active_projects || !newMemory.core_instructions || newProjCount < currentProjCount) {
+      throw new Error("Neural interface attempted to truncate critical memory. State update blocked for integrity.");
+  }
+
   let finalResponseText = parsed.text_response;
-  let finalMemory = parsed.updated_memory;
+  let finalMemory = newMemory;
   let finalFocus = parsed.updated_focus;
 
   const toolRegex = /:::TOOL_REQUEST\s*(\{[\s\S]*?\})\s*:::/;
@@ -119,7 +133,7 @@ export const processInteraction = async (userPrompt: string, currentMemory: Long
         finalResponseText += `\n\n[SYSTEM: File created. ID: ${id}]`;
       } else if (tr.tool === 'findFile') {
         const id = await findFile(tr.args.name);
-        finalResponseText += `\n\n[SYSTEM: File search for '${tr.args.name}' complete. ID: ${id || 'NOT_FOUND'}]`;
+        finalResponseText += `\n\n[SYSTEM: File search complete. ID: ${id || 'NOT_FOUND'}]`;
       }
     } catch (e: any) {
       finalResponseText += `\n\n[SYSTEM ERROR: ${e.message}]`;

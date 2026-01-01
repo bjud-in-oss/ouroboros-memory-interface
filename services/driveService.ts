@@ -1,7 +1,6 @@
 import { AppData } from '../types';
 import { INITIAL_MEMORY, INITIAL_FOCUS } from '../constants';
 
-// Fallback ID to ensure GIS never fails due to missing env var
 const ENV_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const FALLBACK_CLIENT_ID = '765827205160-ft7dv2ud5ruf2tgft4jvt68dm7eboei6.apps.googleusercontent.com';
 const CLIENT_ID = ENV_CLIENT_ID && ENV_CLIENT_ID.length > 5 ? ENV_CLIENT_ID : FALLBACK_CLIENT_ID;
@@ -10,7 +9,6 @@ const DISCOVERY_DOCS = ['https://www.googleapis.com/discovery/v1/apis/drive/v3/r
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 const FOLDER_NAME = 'Ouroboros';
 const FILE_NAME = 'app-data.json';
-const BACKUP_FILE_NAME = 'app-data.backup.json';
 
 let tokenClient: any;
 let gapiInited = false;
@@ -77,7 +75,6 @@ export const ensureFolderExists = async (): Promise<string> => {
     });
     return createResponse.result.id;
   } catch (err) {
-    console.error("Error ensuring folder exists:", err);
     throw new Error("Failed to initialize Ouroboros folder structure.");
   }
 };
@@ -94,11 +91,16 @@ const findFileId = async (fileName: string, folderId: string): Promise<string | 
   } catch (err) { return null; }
 };
 
-export const findFile = async (name: string): Promise<string | null> => {
+export const listJSONFiles = async (): Promise<{id: string, name: string}[]> => {
   try {
     const folderId = await ensureFolderExists();
-    return await findFileId(name, folderId);
-  } catch (err) { return null; }
+    const response = await (window as any).gapi.client.drive.files.list({
+      q: `'${folderId}' in parents and mimeType = 'application/json' and trashed = false`,
+      fields: 'files(id, name)',
+      orderBy: 'modifiedTime desc'
+    });
+    return response.result.files || [];
+  } catch (err) { return []; }
 };
 
 export const readFile = async (fileId: string): Promise<string> => {
@@ -116,7 +118,7 @@ export const createFile = async (name: string, content: string | object, folderI
   try {
     const metadata = { name, mimeType, parents: [folderId] };
     const accessToken = (window as any).gapi.client.getToken().access_token;
-    const bodyContent = typeof content === 'object' ? JSON.stringify(content, null, 2) : content;
+    const bodyContent = typeof content === 'object' ? JSON.stringify(content) : content;
     const multipartRequestBody = `--foo_bar_baz\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--foo_bar_baz\r\nContent-Type: ${mimeType}\r\n\r\n${bodyContent}\r\n--foo_bar_baz--`;
     const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
       method: 'POST',
@@ -128,40 +130,60 @@ export const createFile = async (name: string, content: string | object, folderI
   } catch (error) { throw error; }
 };
 
-export const saveState = async (data: AppData): Promise<void> => {
+export const saveState = async (data: AppData, isBackup: boolean = false): Promise<string> => {
+  if (!data.memory.active_projects || !data.memory.core_instructions) {
+      throw new Error("Integrity check failed: Attempted to save malformed state.");
+  }
+
   const folderId = await ensureFolderExists();
-  const fileId = await findFileId(FILE_NAME, folderId);
-  const metadata = { name: FILE_NAME, mimeType: 'application/json' };
-  const accessToken = (window as any).gapi.client.getToken().access_token;
+  const name = isBackup ? `app-data.backup.${new Date().toISOString().replace(/:/g, '-')}.json` : FILE_NAME;
   
   let url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
   let method = 'POST';
+  const metadata: any = { name, mimeType: 'application/json' };
 
-  if (fileId) {
-    url = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`;
-    method = 'PATCH';
+  if (!isBackup) {
+    const existingId = await findFileId(FILE_NAME, folderId);
+    if (existingId) {
+      url = `https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=multipart`;
+      method = 'PATCH';
+    } else {
+      metadata.parents = [folderId];
+    }
   } else {
-    (metadata as any).parents = [folderId];
+    metadata.parents = [folderId];
   }
 
-  const bodyContent = JSON.stringify(data, null, 2);
+  const bodyContent = JSON.stringify(data);
   const multipartRequestBody = `--foo_bar_baz\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--foo_bar_baz\r\nContent-Type: application/json\r\n\r\n${bodyContent}\r\n--foo_bar_baz--`;
 
   const response = await fetch(url, {
     method,
-    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'multipart/related; boundary=foo_bar_baz' },
+    headers: { 'Authorization': `Bearer ${accessToken()}`, 'Content-Type': 'multipart/related; boundary=foo_bar_baz' },
     body: multipartRequestBody,
   });
+  
   if (!response.ok) throw new Error(`Drive Upload Failed: ${response.statusText}`);
+  const res = await response.json();
+  return res.id;
 };
 
-export const loadState = async (): Promise<AppData | null> => {
+const accessToken = () => (window as any).gapi.client.getToken().access_token;
+
+export const loadState = async (fileId?: string): Promise<AppData | null> => {
   const folderId = await ensureFolderExists();
-  const fileId = await findFileId(FILE_NAME, folderId);
-  if (!fileId) return null;
+  const targetId = fileId || await findFileId(FILE_NAME, folderId);
+  if (!targetId) return null;
   try {
-    const content = await readFile(fileId);
+    const content = await readFile(targetId);
     return JSON.parse(content);
+  } catch (err) { return null; }
+};
+
+export const findFile = async (name: string): Promise<string | null> => {
+  try {
+    const folderId = await ensureFolderExists();
+    return await findFileId(name, folderId);
   } catch (err) { return null; }
 };
 
@@ -169,13 +191,6 @@ export const runDiagnostics = async (): Promise<string> => {
   try {
     const folderId = await ensureFolderExists();
     const appFileId = await findFileId(FILE_NAME, folderId);
-    return `Diagnostic: Folder OK, AppData: ${appFileId || 'Not Found'}`;
+    return `Diagnostic: Folder OK (${folderId}), AppData: ${appFileId || 'Not Found'}`;
   } catch (err: any) { return `Error: ${err.message}`; }
-};
-
-export const performSurgicalInjection = async (): Promise<string> => {
-  const folderId = await ensureFolderExists();
-  const payload: AppData = { app_version: "1.0.0", last_sync_timestamp: Date.now(), memory: INITIAL_MEMORY, focus: INITIAL_FOCUS };
-  const id = await createFile(FILE_NAME, payload, folderId, 'application/json');
-  return `Injection successful: ${id}`;
 };
