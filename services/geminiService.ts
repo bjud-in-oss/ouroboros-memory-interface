@@ -5,6 +5,37 @@ import { readFile, createFile, ensureFolderExists } from "./driveService";
 const apiKey = process.env.API_KEY || '';
 const ai = new GoogleGenAI({ apiKey });
 
+// --- CONTEXT BUDGETING ---
+// Limit context to ~4M characters to ensure stability even with large specs.
+const MAX_CHAR_LIMIT = 4000000;
+
+/**
+ * Enforces a strict character limit on the context passed to the model.
+ * Truncates intelligently if the limit is exceeded.
+ */
+const enforceBudget = (content: string): string => {
+  if (content.length <= MAX_CHAR_LIMIT) return content;
+
+  console.warn(`Context Budget Exceeded: ${content.length} chars. Truncating...`);
+  
+  // Target 80% of the limit to be safe to avoid hitting edge cases
+  let limit = Math.floor(MAX_CHAR_LIMIT * 0.8);
+  const substring = content.substring(0, limit);
+
+  // Try to find a clean break point (end of a JSON object or a sentence)
+  const lastBrace = substring.lastIndexOf('}');
+  const lastPeriod = substring.lastIndexOf('. ');
+
+  // If a clean break is found within the last 5000 chars of the cut, use it.
+  if (lastBrace > limit - 5000) {
+      limit = lastBrace + 1;
+  } else if (lastPeriod > limit - 5000) {
+      limit = lastPeriod + 1;
+  }
+
+  return content.substring(0, limit) + "\n\n[SYSTEM WARNING: CONTEXT TRUNCATED DUE TO SAFETY LIMITS]";
+};
+
 // Define the interface for a parsed tool request
 interface ToolRequest {
   tool: 'createFile';
@@ -155,7 +186,7 @@ export const processInteraction = async (
       }
   }
 
-  const systemPrompt = `
+  let systemPrompt = `
   You are an autonomous AI agent operating under the "Drive-Augmented Ouroboros" architecture.
   
   CORE PRINCIPLE:
@@ -200,6 +231,9 @@ export const processInteraction = async (
 
   ${dynamicContext}
   `;
+
+  // --- APPLY CONTEXT BUDGET ---
+  systemPrompt = enforceBudget(systemPrompt);
 
   try {
     const response = await ai.models.generateContent({
