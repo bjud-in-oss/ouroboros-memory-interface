@@ -5,16 +5,20 @@ import { processInteraction } from './services/geminiService';
 import * as driveService from './services/driveService';
 import MemoryPanel from './components/MemoryPanel';
 import FocusPanel from './components/FocusPanel';
-import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Wrench, X, History, Moon, Zap, CheckCircle2 } from 'lucide-react';
+import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Wrench, X, History, Moon, Zap, CheckCircle2, MessageSquareX } from 'lucide-react';
 
 const VOLATILE_MEMORY_KEY = 'ouroboros_volatile_memory';
+const CHAT_HISTORY_KEY = 'ouroboros_chat_history';
 
 const App: React.FC = () => {
   const [memory, setMemory] = useState<LongTermMemory>(INITIAL_MEMORY);
   const [focus, setFocus] = useState<FocusLog>(INITIAL_FOCUS);
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'system', content: 'Drive-Augmented Ouroboros System Online. Waiting for connection...', timestamp: Date.now() }
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    const saved = localStorage.getItem(CHAT_HISTORY_KEY);
+    return saved ? JSON.parse(saved) : [
+      { role: 'system', content: 'Drive-Augmented Ouroboros System Online. Waiting for connection...', timestamp: Date.now() }
+    ];
+  });
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'memory' | 'focus'>('memory');
@@ -27,10 +31,16 @@ const App: React.FC = () => {
   
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  // Persist volatile state (input/focus)
   useEffect(() => {
     const volatile = { input, focus, timestamp: Date.now() };
     localStorage.setItem(VOLATILE_MEMORY_KEY, JSON.stringify(volatile));
   }, [input, focus]);
+
+  // Persist Chat History
+  useEffect(() => {
+    localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(messages));
+  }, [messages]);
 
   useEffect(() => {
     driveService.loadGoogleScripts(() => {
@@ -53,6 +63,13 @@ const App: React.FC = () => {
 
   const addSystemMessage = (content: string) => {
     setMessages(prev => [...prev, { role: 'system', content, timestamp: Date.now() }]);
+  };
+
+  const handleClearChat = () => {
+    if (window.confirm("Clear all chat messages? This will not affect Drive memory.")) {
+        setMessages([]);
+        localStorage.removeItem(CHAT_HISTORY_KEY);
+    }
   };
 
   const handleRecovery = () => {
@@ -111,8 +128,6 @@ const App: React.FC = () => {
       if (isManualBackup) {
           addSystemMessage('Snapshot Protocol: Manual backup successfully stored in Drive.');
       } else {
-          // Silent or minimal feedback for auto-sync to avoid cluttering, 
-          // but we add it now as requested.
           console.log("Auto-sync successful");
       }
     } catch (err: any) {
@@ -157,7 +172,6 @@ const App: React.FC = () => {
       setFocus(newFocus);
       setMessages(prev => [...prev, { role: 'model', content: response, timestamp: Date.now() }]);
       
-      // After model response, we sync up and provide feedback
       await handleSyncUp(newMemory, newFocus);
     } catch (error: any) {
       if (error instanceof driveService.SessionExpiredError) {
@@ -256,6 +270,13 @@ const App: React.FC = () => {
                   </div>
               </div>
               <div className="flex gap-2">
+                  <button 
+                    onClick={handleClearChat}
+                    className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-500 hover:text-red-400 rounded-md border border-zinc-800 transition-colors"
+                    title="Clear Chat History"
+                  >
+                    <Trash2 size={14} />
+                  </button>
                   {isDriveConnected ? (
                       <button 
                           onClick={handleOpenRestore}
@@ -356,9 +377,10 @@ const App: React.FC = () => {
                           setMemory(INITIAL_MEMORY);
                           setFocus(INITIAL_FOCUS);
                           localStorage.removeItem(VOLATILE_MEMORY_KEY);
+                          localStorage.removeItem(CHAT_HISTORY_KEY);
                           window.location.reload();
                       }
-                  }} className="p-2 text-zinc-700 hover:text-red-500 transition-colors">
+                  }} className="p-2 text-zinc-700 hover:text-red-500 transition-colors" title="Nuclear Reset">
                       <Trash2 size={18} />
                   </button>
               </div>
