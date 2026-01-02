@@ -9,7 +9,13 @@ const netlifyTomlContent = `[build]
 [[redirects]]
   from = "/*"
   to = "/index.html"
-  status = 200`;
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin-allow-popups"
+    Cross-Origin-Embedder-Policy = "unsafe-none"`;
 
 // Säkerställ att public-mappen finns
 if (!fs.existsSync('public')) {
