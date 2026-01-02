@@ -195,13 +195,36 @@ const App: React.FC = () => {
   const handleSmartRelink = async (currentMem: LongTermMemory = memory) => {
       if (!isDriveConnected) return;
       setIsSyncing(true);
-      addSystemMessage("Scanning Drive for project artifacts...");
+      addSystemMessage("Scanning Drive for project artifacts (Multi-pass strategy)...");
       
       try {
           let foundUpdates = [];
           for (const project of currentMem.active_projects) {
-              // Search for file by project name (fuzzy match)
-              const newId = await driveService.findFile(project.name);
+              let newId = null;
+              
+              // Strategy 1: Search by Project ID (High precision for code/technical files)
+              // e.g. 'context_capsule_refactor' -> 'context_capsule_refactor.md'
+              if (!newId) {
+                  newId = await driveService.findFile(project.id);
+              }
+
+              // Strategy 2: Search by Full Project Name
+              // e.g. 'Agency Bridge Activation' -> 'Agency Bridge Activation.pdf'
+              if (!newId) {
+                  newId = await driveService.findFile(project.name);
+              }
+
+              // Strategy 3: Relaxed Partial Match (First 3 words)
+              // e.g. 'Agency Bridge Activation' -> 'Agency Bridge.md'
+              if (!newId) {
+                  const words = project.name.split(' ');
+                  if (words.length > 1) {
+                      const shortName = words.slice(0, Math.min(3, words.length)).join(' ');
+                      newId = await driveService.findFile(shortName);
+                  }
+              }
+
+              // Logic: Only update if found AND different from existing
               if (newId && newId !== project.detailed_spec_file_id) {
                   foundUpdates.push({ name: project.name, oldId: project.detailed_spec_file_id, newId });
               }
@@ -216,7 +239,6 @@ const App: React.FC = () => {
               setInput(prompt);
               // We defer the send slightly to ensure state updates
               setTimeout(() => {
-                  const sendBtn = document.querySelector('button[aria-label="Send Message"]'); // Or direct call
                   handleSendMessage(prompt); 
               }, 100);
           } else {
