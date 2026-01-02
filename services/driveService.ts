@@ -175,6 +175,24 @@ export const listJSONFiles = async (): Promise<{id: string, name: string}[]> => 
   }
 };
 
+export const listAllFiles = async (): Promise<{id: string, name: string, mimeType: string}[]> => {
+  try {
+    const folderId = await ensureFolderExists();
+    // Fetch all files in folder, excluding the folders themselves
+    const response = await (window as any).gapi.client.drive.files.list({
+      q: `'${folderId}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false`,
+      fields: 'files(id, name, mimeType)',
+      orderBy: 'modifiedTime desc',
+      pageSize: 100 
+    });
+    if (response.status === 401) throw new SessionExpiredError("Session Expired during list");
+    return response.result.files || [];
+  } catch (err: any) {
+    if (err.status === 401 || err.name === "SessionExpiredError") throw new SessionExpiredError("Session Expired");
+    return []; 
+  }
+};
+
 export const readFile = async (fileId: string): Promise<string> => {
   const response = await wrapFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
     headers: { 'Authorization': `Bearer ${accessToken()}` }

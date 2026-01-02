@@ -5,10 +5,19 @@ import { processInteraction, checkGeminiConfig } from './services/geminiService'
 import * as driveService from './services/driveService';
 import MemoryPanel from './components/MemoryPanel';
 import FocusPanel from './components/FocusPanel';
-import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Wrench, X, History, Moon, Zap, AlertTriangle, Settings, FileJson, Upload, FileUp, Link } from 'lucide-react';
+import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Wrench, X, History, Moon, Zap, AlertTriangle, Settings, FileJson, Upload, FileUp, Link, FileSearch, Check, AlertCircle } from 'lucide-react';
 
 const VOLATILE_MEMORY_KEY = 'ouroboros_volatile_memory';
 const CHAT_HISTORY_KEY = 'ouroboros_chat_history';
+
+interface RelinkCandidate {
+  projectName: string;
+  projectId: string;
+  currentId?: string;
+  proposedId: string | null;
+  proposedName?: string;
+  status: 'match_found' | 'no_match' | 'manual_selection';
+}
 
 const App: React.FC = () => {
   const [configError, setConfigError] = useState<string | null>(null);
@@ -25,11 +34,19 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'memory' | 'focus'>('memory');
   const [isDriveConnected, setIsDriveConnected] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  
+  // Modals
   const [showRestoreModal, setShowRestoreModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showRelinkModal, setShowRelinkModal] = useState(false);
+  
+  // Data for Modals
   const [importText, setImportText] = useState('');
-  const [isSleeping, setIsSleeping] = useState(false);
   const [backups, setBackups] = useState<{id: string, name: string}[]>([]);
+  const [relinkCandidates, setRelinkCandidates] = useState<RelinkCandidate[]>([]);
+  const [allDriveFiles, setAllDriveFiles] = useState<{id: string, name: string}[]>([]);
+
+  const [isSleeping, setIsSleeping] = useState(false);
   const [recoveryAvailable, setRecoveryAvailable] = useState(false);
   
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -40,8 +57,6 @@ const App: React.FC = () => {
     // Check configuration on mount
     try {
       checkGeminiConfig();
-      // We don't block the whole app for missing Drive config immediately 
-      // unless Gemini is also missing. Gemini is the "heart".
     } catch (e: any) {
       setConfigError(e.message);
     }
@@ -105,7 +120,6 @@ const App: React.FC = () => {
 
   const handleConnectDrive = async () => {
     try {
-      // checkConfig will throw if VITE_GOOGLE_CLIENT_ID is missing
       driveService.checkConfig(); 
       await driveService.authenticate();
       setIsDriveConnected(true);
@@ -164,25 +178,19 @@ const App: React.FC = () => {
   const handleManualImport = async () => {
     try {
         const parsed = JSON.parse(importText);
-        
-        // Basic validation
         if (!parsed.memory || !parsed.focus) {
             throw new Error("Invalid format. JSON must contain 'memory' and 'focus' root keys.");
         }
-
         if (window.confirm("Overwrite current mental state with this import? This will be saved to Drive immediately.")) {
             setMemory(parsed.memory);
             setFocus(parsed.focus);
             setImportText('');
             setShowImportModal(false);
             addSystemMessage('Manual Import: State injected successfully. Uplinking to Drive...');
-            
-            // Immediately save to Drive to establish ownership with new Client ID
             await handleSyncUp(parsed.memory, parsed.focus, false);
             
-            // Suggest Relink
             setTimeout(() => {
-                if (window.confirm("Legacy State Detected. Do you want to auto-scan Drive to relink file IDs for your projects?")) {
+                if (window.confirm("Legacy State Detected. Do you want to open the Smart Relink Interface to fix file IDs?")) {
                     handleSmartRelink(parsed.memory);
                 }
             }, 500);
@@ -195,59 +203,76 @@ const App: React.FC = () => {
   const handleSmartRelink = async (currentMem: LongTermMemory = memory) => {
       if (!isDriveConnected) return;
       setIsSyncing(true);
-      addSystemMessage("Scanning Drive for project artifacts (Multi-pass strategy)...");
+      addSystemMessage("Initiating Smart Relink Protocol (Fetching File Manifest)...");
       
       try {
-          let foundUpdates = [];
+          // 1. Fetch ALL available files to allow manual selection
+          const allFiles = await driveService.listAllFiles();
+          setAllDriveFiles(allFiles);
+
+          const candidates: RelinkCandidate[] = [];
+
           for (const project of currentMem.active_projects) {
-              let newId = null;
-              
-              // Strategy 1: Search by Project ID (High precision for code/technical files)
-              // e.g. 'context_capsule_refactor' -> 'context_capsule_refactor.md'
-              if (!newId) {
-                  newId = await driveService.findFile(project.id);
+              let matchId = null;
+              let matchName = undefined;
+
+              // Auto-Match Heuristics
+              // 1. Check if ID matches a filename
+              const exactIdMatch = allFiles.find(f => f.name.includes(project.id));
+              if (exactIdMatch) { matchId = exactIdMatch.id; matchName = exactIdMatch.name; }
+
+              // 2. Check if Name matches
+              if (!matchId) {
+                  const nameMatch = allFiles.find(f => f.name.includes(project.name));
+                  if (nameMatch) { matchId = nameMatch.id; matchName = nameMatch.name; }
               }
 
-              // Strategy 2: Search by Full Project Name
-              // e.g. 'Agency Bridge Activation' -> 'Agency Bridge Activation.pdf'
-              if (!newId) {
-                  newId = await driveService.findFile(project.name);
+              // 3. Partial Name Match
+              if (!matchId) {
+                   const words = project.name.split(' ');
+                   if (words.length > 1) {
+                       const shortName = words.slice(0, Math.min(3, words.length)).join(' ');
+                       const fuzzyMatch = allFiles.find(f => f.name.includes(shortName));
+                       if (fuzzyMatch) { matchId = fuzzyMatch.id; matchName = fuzzyMatch.name; }
+                   }
               }
 
-              // Strategy 3: Relaxed Partial Match (First 3 words)
-              // e.g. 'Agency Bridge Activation' -> 'Agency Bridge.md'
-              if (!newId) {
-                  const words = project.name.split(' ');
-                  if (words.length > 1) {
-                      const shortName = words.slice(0, Math.min(3, words.length)).join(' ');
-                      newId = await driveService.findFile(shortName);
-                  }
-              }
-
-              // Logic: Only update if found AND different from existing
-              if (newId && newId !== project.detailed_spec_file_id) {
-                  foundUpdates.push({ name: project.name, oldId: project.detailed_spec_file_id, newId });
-              }
+              candidates.push({
+                  projectName: project.name,
+                  projectId: project.id,
+                  currentId: project.detailed_spec_file_id,
+                  proposedId: matchId, // Can be null
+                  proposedName: matchName,
+                  status: matchId ? 'match_found' : 'no_match'
+              });
           }
 
+          setRelinkCandidates(candidates);
           setIsSyncing(false);
-
-          if (foundUpdates.length > 0) {
-              const updateString = foundUpdates.map(u => `- Project "${u.name}": Change ID to "${u.newId}"`).join('\n');
-              const prompt = `SYSTEM MAINTENANCE: I have performed a filesystem scan of the new Drive environment. \n\nPlease update the 'active_projects' list with these VALID file IDs immediately:\n${updateString}\n\nPreserve all other project data exactly as is.`;
-              
-              setInput(prompt);
-              // We defer the send slightly to ensure state updates
-              setTimeout(() => {
-                  handleSendMessage(prompt); 
-              }, 100);
-          } else {
-              addSystemMessage("Scan complete. No matching artifacts found for active projects.");
-          }
+          setShowRelinkModal(true); // OPEN MODAL instead of auto-sending
 
       } catch (e: any) {
           setIsSyncing(false);
           addSystemMessage(`Scan Failed: ${e.message}`);
+      }
+  };
+
+  const applyRelinkChanges = () => {
+      // Filter for actual changes (valid new ID + different from old ID)
+      const updates = relinkCandidates.filter(c => c.proposedId && c.proposedId !== c.currentId);
+      
+      setShowRelinkModal(false);
+
+      if (updates.length > 0) {
+          const updateString = updates.map(u => `- Project "${u.projectName}": Change ID to "${u.proposedId}" (File: ${u.proposedName})`).join('\n');
+          const prompt = `SYSTEM MAINTENANCE: User has manually verified file associations via Relink Interface. \n\nPlease update the 'active_projects' list with these VALID file IDs immediately:\n${updateString}\n\nPreserve all other project data exactly as is.`;
+          
+          setInput(prompt);
+          setTimeout(() => {
+              handleSendMessage(prompt); 
+          }, 100);
+      } else {
+          addSystemMessage("Relink cancelled or no changes required.");
       }
   };
 
@@ -269,12 +294,11 @@ const App: React.FC = () => {
     
     addSystemMessage(`Artifact Injection: ${successCount} files uploaded successfully.`);
     setIsSyncing(false);
-    if (fileInputRef.current) fileInputRef.current.value = ''; // Reset input
+    if (fileInputRef.current) fileInputRef.current.value = '';
 
-    // Suggest Relink
     if (successCount > 0) {
         setTimeout(() => {
-            if (window.confirm("Artifacts uploaded. Do you want to scan and relink project IDs now?")) {
+            if (window.confirm("Artifacts uploaded. Do you want to open the Smart Relink Interface to map these files?")) {
                 handleSmartRelink();
             }
         }, 500);
@@ -302,7 +326,7 @@ const App: React.FC = () => {
     } catch (error: any) {
       addSystemMessage(`ALERT: ${error.message}`);
       if (error.message.includes("Expired")) setIsSleeping(true);
-      else if (!overrideInput) setInput(textToSend); // Restore input on failure if it wasn't an automated prompt
+      else if (!overrideInput) setInput(textToSend);
     } finally {
       setIsLoading(false);
     }
@@ -317,16 +341,6 @@ const App: React.FC = () => {
             <h1 className="text-xl font-bold text-white uppercase tracking-tighter italic">Configuration Required</h1>
             <p className="text-zinc-400 text-sm mt-2 leading-relaxed">{configError}</p>
           </div>
-          <div className="text-left bg-black/40 rounded-lg p-4 border border-zinc-800">
-            <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-              <Settings size={10} /> Setup Instructions
-            </h3>
-            <ul className="text-xs text-zinc-400 space-y-2">
-              <li className="flex gap-2"><span>1.</span> <span>Add <b>VITE_API_KEY</b> to your environment.</span></li>
-              <li className="flex gap-2"><span>2.</span> <span>Add <b>VITE_GOOGLE_CLIENT_ID</b> for Drive storage.</span></li>
-              <li className="flex gap-2"><span>3.</span> <span>Restart development server or redeploy.</span></li>
-            </ul>
-          </div>
           <button onClick={() => window.location.reload()} className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-3 rounded-xl transition-all">
             RETRY INITIALIZATION
           </button>
@@ -337,14 +351,7 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen w-full bg-zinc-950 text-zinc-300 font-sans overflow-hidden relative">
-      {/* Hidden File Input */}
-      <input 
-          type="file" 
-          ref={fileInputRef} 
-          onChange={handleFileUpload} 
-          className="hidden" 
-          multiple 
-      />
+      <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" multiple />
 
       {/* Recovery Prompt */}
       {recoveryAvailable && (
@@ -365,20 +372,94 @@ const App: React.FC = () => {
                 <Moon size={64} className="text-indigo-500 animate-pulse mx-auto" />
                 <Zap size={24} className="text-amber-500 absolute -top-1 -right-1" />
               </div>
-              <div>
-                <h2 className="text-2xl font-bold text-white tracking-tighter uppercase italic">Digital Sleep</h2>
-                <p className="text-zinc-500 text-sm mt-2 leading-relaxed">Neural session expired. All volatile states are locked and preserved. Wake the core to synchronize.</p>
-              </div>
-              <button 
-                onClick={handleConnectDrive}
-                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2 transition-all transform active:scale-95"
-              >
-                <Zap size={18} /> INITIALIZE WAKE PROTOCOL
-              </button>
+              <h2 className="text-2xl font-bold text-white tracking-tighter uppercase italic">Digital Sleep</h2>
+              <button onClick={handleConnectDrive} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 rounded-xl shadow-lg">WAKE CORE</button>
            </div>
         </div>
       )}
       
+      {/* Relink Modal */}
+      {showRelinkModal && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/90 backdrop-blur-md p-6">
+            <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[90vh]">
+                <div className="p-5 border-b border-zinc-800 bg-zinc-900/50 flex justify-between items-center">
+                    <div>
+                        <h2 className="text-sm font-bold uppercase tracking-widest flex items-center gap-2 text-purple-400">
+                            <FileSearch size={16} /> Relink Interface
+                        </h2>
+                        <p className="text-xs text-zinc-500 mt-1">Review and approve file associations before updating memory.</p>
+                    </div>
+                    <button onClick={() => setShowRelinkModal(false)} className="text-zinc-500 hover:text-white"><X size={20} /></button>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">
+                    <table className="w-full border-collapse">
+                        <thead className="text-xs uppercase text-zinc-500 font-bold bg-zinc-950 sticky top-0">
+                            <tr>
+                                <th className="p-3 text-left">Project Name</th>
+                                <th className="p-3 text-left">Current ID (Memory)</th>
+                                <th className="p-3 text-left">Proposed File Link</th>
+                                <th className="p-3 text-center">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody className="text-sm">
+                            {relinkCandidates.map((candidate, idx) => (
+                                <tr key={idx} className="border-b border-zinc-800/50 hover:bg-zinc-800/30">
+                                    <td className="p-3 text-zinc-300 font-medium">{candidate.projectName}</td>
+                                    <td className="p-3">
+                                        <div className="font-mono text-[10px] text-zinc-600 truncate w-32" title={candidate.currentId}>
+                                            {candidate.currentId || 'NONE'}
+                                        </div>
+                                    </td>
+                                    <td className="p-3">
+                                        <select 
+                                            className={`w-full bg-black/40 border rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-purple-500 outline-none ${
+                                                candidate.proposedId && candidate.proposedId !== candidate.currentId ? 'border-purple-500/50 text-purple-200' : 'border-zinc-700 text-zinc-400'
+                                            }`}
+                                            value={candidate.proposedId || ''}
+                                            onChange={(e) => {
+                                                const newId = e.target.value;
+                                                const fileObj = allDriveFiles.find(f => f.id === newId);
+                                                const updated = [...relinkCandidates];
+                                                updated[idx] = {
+                                                    ...candidate,
+                                                    proposedId: newId || null,
+                                                    proposedName: fileObj?.name,
+                                                    status: 'manual_selection'
+                                                };
+                                                setRelinkCandidates(updated);
+                                            }}
+                                        >
+                                            <option value="">-- No Association / Create New --</option>
+                                            {allDriveFiles.map(f => (
+                                                <option key={f.id} value={f.id}>{f.name}</option>
+                                            ))}
+                                        </select>
+                                    </td>
+                                    <td className="p-3 text-center">
+                                        {candidate.status === 'match_found' && <span className="text-green-500 text-[10px] uppercase font-bold flex justify-center items-center gap-1"><Check size={10} /> Auto</span>}
+                                        {candidate.status === 'no_match' && <span className="text-zinc-600 text-[10px] uppercase font-bold flex justify-center items-center gap-1"><AlertCircle size={10} /> None</span>}
+                                        {candidate.status === 'manual_selection' && <span className="text-purple-400 text-[10px] uppercase font-bold flex justify-center items-center gap-1"><Check size={10} /> Manual</span>}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div className="p-5 border-t border-zinc-800 bg-zinc-900/50 flex justify-end gap-3">
+                    <button onClick={() => setShowRelinkModal(false)} className="px-4 py-2 text-xs font-bold text-zinc-400 hover:text-white">CANCEL</button>
+                    <button 
+                        onClick={applyRelinkChanges}
+                        className="bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold px-6 py-2 rounded-lg transition-all shadow-lg shadow-purple-500/20 flex items-center gap-2"
+                    >
+                        APPLY CHANGES
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
       {/* Restore Modal */}
       {showRestoreModal && (
           <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
@@ -387,21 +468,11 @@ const App: React.FC = () => {
                       <h2 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2 text-indigo-400">
                           <History size={14} /> Restore Point Selection
                       </h2>
-                      <button onClick={() => setShowRestoreModal(false)} className="text-zinc-500 hover:text-white transition-colors">
-                          <X size={18} />
-                      </button>
+                      <button onClick={() => setShowRestoreModal(false)} className="text-zinc-500 hover:text-white transition-colors"><X size={18} /></button>
                   </div>
                   <div className="max-h-[60vh] overflow-y-auto p-2 custom-scrollbar">
-                      {backups.length === 0 && <p className="text-center py-8 text-zinc-600 italic text-sm">No backup fragments found.</p>}
                       {backups.map(b => (
-                          <button 
-                            key={b.id} 
-                            onClick={() => handleSyncDown(b.id)}
-                            className="w-full text-left p-3 hover:bg-zinc-800/50 rounded-lg border border-transparent hover:border-zinc-700/50 transition-all mb-1 group"
-                          >
-                              <div className="text-zinc-200 text-sm font-medium group-hover:text-indigo-400 truncate">{b.name}</div>
-                              <div className="text-[9px] text-zinc-600 font-mono mt-1">{b.id}</div>
-                          </button>
+                          <button key={b.id} onClick={() => handleSyncDown(b.id)} className="w-full text-left p-3 hover:bg-zinc-800/50 rounded-lg text-zinc-200 text-sm font-medium transition-all mb-1">{b.name}</button>
                       ))}
                   </div>
               </div>
@@ -413,34 +484,20 @@ const App: React.FC = () => {
           <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
               <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[85vh]">
                   <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-900/50">
-                      <h2 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2 text-emerald-400">
-                          <Upload size={14} /> Import Legacy State
-                      </h2>
-                      <button onClick={() => setShowImportModal(false)} className="text-zinc-500 hover:text-white transition-colors">
-                          <X size={18} />
-                      </button>
+                      <h2 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2 text-emerald-400"><Upload size={14} /> Import Legacy State</h2>
+                      <button onClick={() => setShowImportModal(false)} className="text-zinc-500 hover:text-white transition-colors"><X size={18} /></button>
                   </div>
                   <div className="p-4 flex-1 flex flex-col min-h-0">
-                      <p className="text-zinc-400 text-xs mb-3">
-                          Paste the content of your old <code>app-data.json</code> here. This will inject the memory into the current session and save it to Drive under the new Client ID.
-                          <br/><span className="text-amber-500/80 italic mt-1 block">Warning: Links to external spec files created by old agents will likely break.</span>
-                      </p>
                       <textarea 
                           value={importText}
                           onChange={(e) => setImportText(e.target.value)}
-                          placeholder='{"memory": { ... }, "focus": { ... }}'
-                          className="flex-1 w-full bg-black/50 border border-zinc-700 rounded-lg p-3 text-xs font-mono text-zinc-300 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 outline-none resize-none custom-scrollbar"
+                          placeholder='Paste app-data.json content here...'
+                          className="flex-1 w-full bg-black/50 border border-zinc-700 rounded-lg p-3 text-xs font-mono text-zinc-300 outline-none resize-none custom-scrollbar"
                       />
                   </div>
                   <div className="p-4 border-t border-zinc-800 bg-zinc-900/50 flex justify-end gap-2">
                       <button onClick={() => setShowImportModal(false)} className="px-4 py-2 text-xs font-bold text-zinc-400 hover:text-white">CANCEL</button>
-                      <button 
-                          onClick={handleManualImport}
-                          disabled={!importText.trim()}
-                          className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold px-6 py-2 rounded-lg transition-all shadow-lg shadow-emerald-500/20"
-                      >
-                          INJECT MEMORY
-                      </button>
+                      <button onClick={handleManualImport} disabled={!importText.trim()} className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold px-6 py-2 rounded-lg transition-all">INJECT MEMORY</button>
                   </div>
               </div>
           </div>
@@ -466,53 +523,16 @@ const App: React.FC = () => {
                   </div>
               </div>
               <div className="flex gap-2">
-                  <button 
-                    onClick={handleClearChat}
-                    className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-500 hover:text-red-400 rounded-md border border-zinc-800 transition-colors"
-                    title="Clear Chat History"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  <button onClick={handleClearChat} className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-500 hover:text-red-400 rounded-md border border-zinc-800 transition-colors" title="Clear Chat History"><Trash2 size={14} /></button>
                   {isDriveConnected ? (
                       <div className="flex gap-1">
-                        <button 
-                            onClick={() => fileInputRef.current?.click()}
-                            className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-blue-400 hover:text-blue-300 rounded-md border border-zinc-800 transition-colors"
-                            title="Upload Artifacts (Specs/Images)"
-                        >
-                            <FileUp size={14} />
-                        </button>
-                        <button 
-                            onClick={() => handleSmartRelink()}
-                            className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-purple-400 hover:text-purple-300 rounded-md border border-zinc-800 transition-colors"
-                            title="Scan & Relink IDs"
-                        >
-                            <Link size={14} />
-                        </button>
-                        <button 
-                            onClick={() => setShowImportModal(true)}
-                            className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-emerald-400 rounded-md border border-zinc-800 transition-colors"
-                            title="Import Legacy JSON"
-                        >
-                            <FileJson size={14} />
-                        </button>
-                        <button 
-                            onClick={() => {
-                                driveService.listJSONFiles().then(files => {
-                                    setBackups(files);
-                                    setShowRestoreModal(true);
-                                });
-                            }}
-                            className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-amber-500 rounded-md border border-zinc-800 transition-colors"
-                            title="Restore"
-                        >
-                            <Wrench size={14} />
-                        </button>
+                        <button onClick={() => fileInputRef.current?.click()} className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-blue-400 hover:text-blue-300 rounded-md border border-zinc-800 transition-colors" title="Upload Artifacts"><FileUp size={14} /></button>
+                        <button onClick={() => handleSmartRelink()} className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-purple-400 hover:text-purple-300 rounded-md border border-zinc-800 transition-colors" title="Scan & Relink IDs"><Link size={14} /></button>
+                        <button onClick={() => setShowImportModal(true)} className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-emerald-400 rounded-md border border-zinc-800 transition-colors" title="Import Legacy JSON"><FileJson size={14} /></button>
+                        <button onClick={() => { driveService.listJSONFiles().then(files => { setBackups(files); setShowRestoreModal(true); }); }} className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-amber-500 rounded-md border border-zinc-800 transition-colors" title="Restore"><Wrench size={14} /></button>
                       </div>
                   ) : (
-                      <button onClick={handleConnectDrive} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold px-3 py-1.5 rounded-md transition-all shadow-lg shadow-indigo-500/10">
-                          <LogIn size={12} /> CONNECT DRIVE
-                      </button>
+                      <button onClick={handleConnectDrive} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold px-3 py-1.5 rounded-md transition-all shadow-lg shadow-indigo-500/10"><LogIn size={12} /> CONNECT DRIVE</button>
                   )}
               </div>
           </header>
@@ -521,11 +541,7 @@ const App: React.FC = () => {
               {messages.map((msg, i) => (
                   <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                       <div className={`max-w-[90%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm transition-all animate-in fade-in slide-in-from-bottom-2 ${
-                          msg.role === 'user' 
-                              ? 'bg-zinc-800 text-zinc-100 rounded-tr-none border border-zinc-700' 
-                              : msg.role === 'system'
-                              ? 'bg-zinc-900/50 text-indigo-400 border border-indigo-900/30 text-[9px] font-mono w-full px-3 py-2 flex items-center gap-2 italic uppercase tracking-wider'
-                              : 'bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-tl-none'
+                          msg.role === 'user' ? 'bg-zinc-800 text-zinc-100 rounded-tr-none border border-zinc-700' : msg.role === 'system' ? 'bg-zinc-900/50 text-indigo-400 border border-indigo-900/30 text-[9px] font-mono w-full px-3 py-2 flex items-center gap-2 italic uppercase tracking-wider' : 'bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-tl-none'
                       }`}>
                           {msg.role === 'system' && <Terminal size={10} className="shrink-0" />}
                           {msg.content}
@@ -552,12 +568,7 @@ const App: React.FC = () => {
                       disabled={isLoading || !isDriveConnected}
                       className="w-full bg-transparent border-none text-zinc-200 text-sm pl-4 pr-12 py-3 focus:ring-0 resize-none max-h-[200px] min-h-[46px] overflow-y-auto custom-scrollbar disabled:opacity-50 font-medium"
                   />
-                  <button 
-                      onClick={() => handleSendMessage()}
-                      disabled={isLoading || !input.trim() || !isDriveConnected}
-                      aria-label="Send Message"
-                      className="absolute right-2 bottom-2 p-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md transition-all disabled:opacity-50"
-                  >
+                  <button onClick={() => handleSendMessage()} disabled={isLoading || !input.trim() || !isDriveConnected} aria-label="Send Message" className="absolute right-2 bottom-2 p-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md transition-all disabled:opacity-50">
                       {isLoading ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Send size={16} />}
                   </button>
               </div>
@@ -566,7 +577,7 @@ const App: React.FC = () => {
                     {isSyncing ? <Cloud size={10} className="text-indigo-500 animate-pulse" /> : <HardDrive size={10} />}
                     {isSyncing ? "Uplinking to Drive..." : "Sync stable"}
                 </div>
-                <div className="text-[9px] text-zinc-700 font-mono">v1.3.2-stable</div>
+                <div className="text-[9px] text-zinc-700 font-mono">v1.3.3-relink</div>
               </div>
           </footer>
         </section>
@@ -584,12 +595,7 @@ const App: React.FC = () => {
               </div>
 
               <div className="flex items-center gap-1">
-                  <button 
-                      onClick={() => handleSyncUp(memory, focus, true)}
-                      disabled={isSyncing || !isDriveConnected}
-                      className="p-2 text-indigo-400 hover:bg-indigo-500/10 rounded-md transition-colors disabled:opacity-30"
-                      title="Snapshot to Drive"
-                  >
+                  <button onClick={() => handleSyncUp(memory, focus, true)} disabled={isSyncing || !isDriveConnected} className="p-2 text-indigo-400 hover:bg-indigo-500/10 rounded-md transition-colors disabled:opacity-30" title="Snapshot to Drive">
                       <Cloud size={18} className={isSyncing ? 'animate-bounce' : ''} />
                   </button>
                   <button onClick={() => {
@@ -599,9 +605,7 @@ const App: React.FC = () => {
                       dl.setAttribute("download", `ouroboros_backup_${new Date().toISOString().split('T')[0]}.json`);
                       dl.click();
                       addSystemMessage('Local storage: State exported as JSON file.');
-                  }} className="p-2 text-zinc-500 hover:text-zinc-300 rounded-md transition-colors">
-                      <Download size={18} />
-                  </button>
+                  }} className="p-2 text-zinc-500 hover:text-zinc-300 rounded-md transition-colors"><Download size={18} /></button>
                   <div className="h-4 w-px bg-zinc-800 mx-2"></div>
                   <button onClick={() => {
                       if(window.confirm("Nuclear reset? This wipes local volatile state and resets session.")) {
@@ -611,9 +615,7 @@ const App: React.FC = () => {
                           localStorage.removeItem(CHAT_HISTORY_KEY);
                           window.location.reload();
                       }
-                  }} className="p-2 text-zinc-700 hover:text-red-500 transition-colors" title="Nuclear Reset">
-                      <Trash2 size={18} />
-                  </button>
+                  }} className="p-2 text-zinc-700 hover:text-red-500 transition-colors" title="Nuclear Reset"><Trash2 size={18} /></button>
               </div>
           </nav>
 
