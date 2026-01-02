@@ -26,7 +26,7 @@ const enforceBudget = (content: string): string => {
 };
 
 interface ToolRequest {
-  tool: 'createFile' | 'findFile';
+  tool: 'createFile' | 'findFile' | 'readFile';
   args: any;
 }
 
@@ -163,6 +163,7 @@ ${dynamicContext}
 Embed in 'text_response' to execute:
 - :::TOOL_REQUEST {"tool": "findFile", "args": {"name": "partial_name"}} :::
 - :::TOOL_REQUEST {"tool": "createFile", "args": {"name": "filename.md", "content": "..."}} :::
+- :::TOOL_REQUEST {"tool": "readFile", "args": {"fileId": "drive_file_id"}} :::
 </tool_definitions>
 `;
 
@@ -208,6 +209,9 @@ Embed in 'text_response' to execute:
         } else if (tr.tool === 'findFile') {
           const id = await findFile(tr.args.name);
           finalResponseText += `\n\n[SYSTEM: File search for '${tr.args.name}' complete. ID: ${id || 'NOT_FOUND'}]`;
+        } else if (tr.tool === 'readFile') {
+          const content = await readFile(tr.args.fileId);
+          finalResponseText += `\n\n[SYSTEM: Read File Content (${tr.args.fileId})]:\n${content}\n`;
         }
       } catch (e: any) {
         finalResponseText += `\n\n[SYSTEM ERROR executing tool: ${e.message}]`;
