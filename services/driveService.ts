@@ -197,6 +197,26 @@ export const createFile = async (name: string, content: string | object, folderI
   return result.id;
 };
 
+// New function to handle raw file uploads (Blobs/Files)
+export const uploadArtifact = async (file: File): Promise<string> => {
+  const folderId = await ensureFolderExists();
+  const metadata = { name: file.name, parents: [folderId] };
+  
+  const form = new FormData();
+  form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+  form.append('file', file);
+
+  const response = await wrapFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${accessToken()}` },
+    body: form,
+  });
+  
+  if (!response.ok) throw new Error(`Artifact Upload Failed: ${response.statusText}`);
+  const result = await response.json();
+  return result.id;
+};
+
 export const saveState = async (data: AppData, isBackup: boolean = false): Promise<string> => {
   if (!data.memory.active_projects || !data.memory.core_instructions) {
       throw new Error("Integrity check failed: Attempted to save malformed state.");

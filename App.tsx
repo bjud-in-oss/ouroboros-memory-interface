@@ -5,7 +5,7 @@ import { processInteraction, checkGeminiConfig } from './services/geminiService'
 import * as driveService from './services/driveService';
 import MemoryPanel from './components/MemoryPanel';
 import FocusPanel from './components/FocusPanel';
-import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Wrench, X, History, Moon, Zap, AlertTriangle, Settings } from 'lucide-react';
+import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Wrench, X, History, Moon, Zap, AlertTriangle, Settings, FileJson, Upload, FileUp } from 'lucide-react';
 
 const VOLATILE_MEMORY_KEY = 'ouroboros_volatile_memory';
 const CHAT_HISTORY_KEY = 'ouroboros_chat_history';
@@ -26,11 +26,14 @@ const App: React.FC = () => {
   const [isDriveConnected, setIsDriveConnected] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [showRestoreModal, setShowRestoreModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importText, setImportText] = useState('');
   const [isSleeping, setIsSleeping] = useState(false);
   const [backups, setBackups] = useState<{id: string, name: string}[]>([]);
   const [recoveryAvailable, setRecoveryAvailable] = useState(false);
   
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     // Check configuration on mount
@@ -149,6 +152,51 @@ const App: React.FC = () => {
     }
   };
 
+  const handleManualImport = async () => {
+    try {
+        const parsed = JSON.parse(importText);
+        
+        // Basic validation
+        if (!parsed.memory || !parsed.focus) {
+            throw new Error("Invalid format. JSON must contain 'memory' and 'focus' root keys.");
+        }
+
+        if (window.confirm("Overwrite current mental state with this import? This will be saved to Drive immediately.")) {
+            setMemory(parsed.memory);
+            setFocus(parsed.focus);
+            setImportText('');
+            setShowImportModal(false);
+            addSystemMessage('Manual Import: State injected successfully. Uplinking to Drive...');
+            
+            // Immediately save to Drive to establish ownership with new Client ID
+            await handleSyncUp(parsed.memory, parsed.focus, false); 
+        }
+    } catch (e: any) {
+        alert(`Import Failed: ${e.message}`);
+    }
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsSyncing(true);
+    let successCount = 0;
+    
+    for (let i = 0; i < files.length; i++) {
+        try {
+            await driveService.uploadArtifact(files[i]);
+            successCount++;
+        } catch (e: any) {
+            addSystemMessage(`Failed to upload ${files[i].name}: ${e.message}`);
+        }
+    }
+    
+    addSystemMessage(`Artifact Injection: ${successCount} files uploaded successfully.`);
+    setIsSyncing(false);
+    if (fileInputRef.current) fileInputRef.current.value = ''; // Reset input
+  };
+
   const handleSendMessage = async () => {
     if (!input.trim() || isLoading || !isDriveConnected) return;
     
@@ -205,6 +253,15 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen w-full bg-zinc-950 text-zinc-300 font-sans overflow-hidden relative">
+      {/* Hidden File Input */}
+      <input 
+          type="file" 
+          ref={fileInputRef} 
+          onChange={handleFileUpload} 
+          className="hidden" 
+          multiple 
+      />
+
       {/* Recovery Prompt */}
       {recoveryAvailable && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[60] bg-indigo-900/90 backdrop-blur-md border border-indigo-500/50 rounded-full px-4 py-2 flex items-center gap-3 shadow-2xl animate-in slide-in-from-top duration-300">
@@ -267,6 +324,44 @@ const App: React.FC = () => {
           </div>
       )}
 
+      {/* Import Modal */}
+      {showImportModal && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+              <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[85vh]">
+                  <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-900/50">
+                      <h2 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2 text-emerald-400">
+                          <Upload size={14} /> Import Legacy State
+                      </h2>
+                      <button onClick={() => setShowImportModal(false)} className="text-zinc-500 hover:text-white transition-colors">
+                          <X size={18} />
+                      </button>
+                  </div>
+                  <div className="p-4 flex-1 flex flex-col min-h-0">
+                      <p className="text-zinc-400 text-xs mb-3">
+                          Paste the content of your old <code>app-data.json</code> here. This will inject the memory into the current session and save it to Drive under the new Client ID.
+                          <br/><span className="text-amber-500/80 italic mt-1 block">Warning: Links to external spec files created by old agents will likely break.</span>
+                      </p>
+                      <textarea 
+                          value={importText}
+                          onChange={(e) => setImportText(e.target.value)}
+                          placeholder='{"memory": { ... }, "focus": { ... }}'
+                          className="flex-1 w-full bg-black/50 border border-zinc-700 rounded-lg p-3 text-xs font-mono text-zinc-300 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 outline-none resize-none custom-scrollbar"
+                      />
+                  </div>
+                  <div className="p-4 border-t border-zinc-800 bg-zinc-900/50 flex justify-end gap-2">
+                      <button onClick={() => setShowImportModal(false)} className="px-4 py-2 text-xs font-bold text-zinc-400 hover:text-white">CANCEL</button>
+                      <button 
+                          onClick={handleManualImport}
+                          disabled={!importText.trim()}
+                          className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold px-6 py-2 rounded-lg transition-all shadow-lg shadow-emerald-500/20"
+                      >
+                          INJECT MEMORY
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {/* Main Container */}
       <main className="flex flex-1 overflow-hidden">
         {/* Sidebar: Chat */}
@@ -295,18 +390,34 @@ const App: React.FC = () => {
                     <Trash2 size={14} />
                   </button>
                   {isDriveConnected ? (
-                      <button 
-                          onClick={() => {
-                              driveService.listJSONFiles().then(files => {
-                                  setBackups(files);
-                                  setShowRestoreModal(true);
-                              });
-                          }}
-                          className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-amber-500 rounded-md border border-zinc-800 transition-colors"
-                          title="Restore"
-                      >
-                          <Wrench size={14} />
-                      </button>
+                      <div className="flex gap-1">
+                        <button 
+                            onClick={() => fileInputRef.current?.click()}
+                            className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-blue-400 hover:text-blue-300 rounded-md border border-zinc-800 transition-colors"
+                            title="Upload Artifacts (Specs/Images)"
+                        >
+                            <FileUp size={14} />
+                        </button>
+                        <button 
+                            onClick={() => setShowImportModal(true)}
+                            className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-emerald-400 rounded-md border border-zinc-800 transition-colors"
+                            title="Import Legacy JSON"
+                        >
+                            <FileJson size={14} />
+                        </button>
+                        <button 
+                            onClick={() => {
+                                driveService.listJSONFiles().then(files => {
+                                    setBackups(files);
+                                    setShowRestoreModal(true);
+                                });
+                            }}
+                            className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-amber-500 rounded-md border border-zinc-800 transition-colors"
+                            title="Restore"
+                        >
+                            <Wrench size={14} />
+                        </button>
+                      </div>
                   ) : (
                       <button onClick={handleConnectDrive} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold px-3 py-1.5 rounded-md transition-all shadow-lg shadow-indigo-500/10">
                           <LogIn size={12} /> CONNECT DRIVE
