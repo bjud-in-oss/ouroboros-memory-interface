@@ -14,6 +14,27 @@ let tokenClient: any;
 let gapiInited = false;
 let gisInited = false;
 
+export class SessionExpiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SessionExpiredError";
+  }
+}
+
+const accessToken = () => {
+  const token = (window as any).gapi?.client?.getToken();
+  if (!token) throw new SessionExpiredError("No access token available");
+  return token.access_token;
+};
+
+const wrapFetch = async (url: string, options: RequestInit) => {
+  const response = await fetch(url, options);
+  if (response.status === 401) {
+    throw new SessionExpiredError("Session Token Expired");
+  }
+  return response;
+};
+
 export const loadGoogleScripts = (callback: () => void) => {
   const script1 = document.createElement('script');
   script1.src = 'https://apis.google.com/js/api.js';
@@ -66,6 +87,10 @@ export const ensureFolderExists = async (): Promise<string> => {
       fields: 'files(id, name)',
       spaces: 'drive',
     });
+    
+    // Check for 401 manually since this is a gapi call
+    if (response.status === 401) throw new SessionExpiredError("Session Expired during folder check");
+    
     const files = response.result.files;
     if (files && files.length > 0) return files[0].id;
 
@@ -74,7 +99,8 @@ export const ensureFolderExists = async (): Promise<string> => {
       fields: 'id',
     });
     return createResponse.result.id;
-  } catch (err) {
+  } catch (err: any) {
+    if (err.name === "SessionExpiredError" || err.status === 401) throw new SessionExpiredError("Session Expired");
     throw new Error("Failed to initialize Ouroboros folder structure.");
   }
 };
@@ -87,9 +113,13 @@ const findFileId = async (fileName: string, folderId: string, partial: boolean =
       fields: 'files(id, name)',
       spaces: 'drive',
     });
+    if (response.status === 401) throw new SessionExpiredError("Session Expired during file search");
     const files = response.result.files;
     return (files && files.length > 0) ? files[0].id : null;
-  } catch (err) { return null; }
+  } catch (err: any) { 
+    if (err.status === 401 || err.name === "SessionExpiredError") throw new SessionExpiredError("Session Expired");
+    return null; 
+  }
 };
 
 export const listJSONFiles = async (): Promise<{id: string, name: string}[]> => {
@@ -100,35 +130,34 @@ export const listJSONFiles = async (): Promise<{id: string, name: string}[]> => 
       fields: 'files(id, name)',
       orderBy: 'modifiedTime desc'
     });
+    if (response.status === 401) throw new SessionExpiredError("Session Expired during list");
     return response.result.files || [];
-  } catch (err) { return []; }
+  } catch (err: any) {
+    if (err.status === 401 || err.name === "SessionExpiredError") throw new SessionExpiredError("Session Expired");
+    return []; 
+  }
 };
 
 export const readFile = async (fileId: string): Promise<string> => {
-  try {
-    const accessToken = (window as any).gapi.client.getToken().access_token;
-    const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
-      headers: { 'Authorization': `Bearer ${accessToken}` }
-    });
-    if (!response.ok) throw new Error("Read File Failed");
-    return await response.text();
-  } catch (error) { throw error; }
+  const response = await wrapFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+    headers: { 'Authorization': `Bearer ${accessToken()}` }
+  });
+  if (!response.ok) throw new Error("Read File Failed");
+  return await response.text();
 };
 
 export const createFile = async (name: string, content: string | object, folderId: string, mimeType: string): Promise<string> => {
-  try {
-    const metadata = { name, mimeType, parents: [folderId] };
-    const accessToken = (window as any).gapi.client.getToken().access_token;
-    const bodyContent = typeof content === 'object' ? JSON.stringify(content, null, 2) : content;
-    const multipartRequestBody = `--foo_bar_baz\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--foo_bar_baz\r\nContent-Type: ${mimeType}\r\n\r\n${bodyContent}\r\n--foo_bar_baz--`;
-    const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'multipart/related; boundary=foo_bar_baz' },
-      body: multipartRequestBody,
-    });
-    const result = await response.json();
-    return result.id;
-  } catch (error) { throw error; }
+  const metadata = { name, mimeType, parents: [folderId] };
+  const bodyContent = typeof content === 'object' ? JSON.stringify(content, null, 2) : content;
+  const multipartRequestBody = `--foo_bar_baz\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--foo_bar_baz\r\nContent-Type: ${mimeType}\r\n\r\n${bodyContent}\r\n--foo_bar_baz--`;
+  
+  const response = await wrapFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${accessToken()}`, 'Content-Type': 'multipart/related; boundary=foo_bar_baz' },
+    body: multipartRequestBody,
+  });
+  const result = await response.json();
+  return result.id;
 };
 
 export const saveState = async (data: AppData, isBackup: boolean = false): Promise<string> => {
@@ -158,7 +187,7 @@ export const saveState = async (data: AppData, isBackup: boolean = false): Promi
   const bodyContent = JSON.stringify(data, null, 2);
   const multipartRequestBody = `--foo_bar_baz\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--foo_bar_baz\r\nContent-Type: application/json\r\n\r\n${bodyContent}\r\n--foo_bar_baz--`;
 
-  const response = await fetch(url, {
+  const response = await wrapFetch(url, {
     method,
     headers: { 'Authorization': `Bearer ${accessToken()}`, 'Content-Type': 'multipart/related; boundary=foo_bar_baz' },
     body: multipartRequestBody,
@@ -169,8 +198,6 @@ export const saveState = async (data: AppData, isBackup: boolean = false): Promi
   return res.id;
 };
 
-const accessToken = () => (window as any).gapi.client.getToken().access_token;
-
 export const loadState = async (fileId?: string): Promise<AppData | null> => {
   const folderId = await ensureFolderExists();
   const targetId = fileId || await findFileId(FILE_NAME, folderId);
@@ -178,15 +205,15 @@ export const loadState = async (fileId?: string): Promise<AppData | null> => {
   try {
     const content = await readFile(targetId);
     return JSON.parse(content);
-  } catch (err) { return null; }
+  } catch (err: any) {
+    if (err.name === "SessionExpiredError") throw err;
+    return null;
+  }
 };
 
 export const findFile = async (name: string): Promise<string | null> => {
-  try {
-    const folderId = await ensureFolderExists();
-    // Use the 'contains' operator for fuzzy/partial matching as requested
-    return await findFileId(name, folderId, true);
-  } catch (err) { return null; }
+  const folderId = await ensureFolderExists();
+  return await findFileId(name, folderId, true);
 };
 
 export const runDiagnostics = async (): Promise<string> => {
@@ -194,7 +221,10 @@ export const runDiagnostics = async (): Promise<string> => {
     const folderId = await ensureFolderExists();
     const appFileId = await findFileId(FILE_NAME, folderId);
     return `Diagnostic: Folder OK (${folderId}), AppData: ${appFileId || 'Not Found'}`;
-  } catch (err: any) { return `Error: ${err.message}`; }
+  } catch (err: any) { 
+    if (err.name === "SessionExpiredError") throw err;
+    return `Error: ${err.message}`; 
+  }
 };
 
 export const performSurgicalInjection = async (): Promise<string> => {

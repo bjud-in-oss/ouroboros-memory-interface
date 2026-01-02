@@ -1,20 +1,19 @@
 import { LongTermMemory, FocusLog } from './types';
 
 export const INITIAL_MEMORY: LongTermMemory = {
-  "schema_version": "1.3",
+  "schema_version": "1.3.1",
   "core_instructions": [
-    "--- CRITICAL TECHNICAL DIRECTIVES (DO NOT REMOVE) ---",
-    "DRIVE ID LAW: Google Drive is a flat ID-based database. NEVER use Unix paths (e.g., /content/drive/). Always resolve folderId via query.",
-    "SCOPE SAFETY: The 'drive.file' scope requires an 'ensureFolderExists' strategy. If a folder is not found, create it to gain ownership.",
-    "API PROTOCOL: In multipart PATCH requests, NEVER include the 'parents' field unless moving the file (causes 400 Bad Request).",
-    "SNAPSHOT STRATEGY: State saves now trigger an automatic backup to 'app-data.backup.json'. This is a system-level safety net.",
-    "CONTEXT CAPSULE LAW: Heavy knowledge modules must be stored as separate Markdown files and referenced by 'detailed_spec_file_id' in the project index.",
-    "TOOL EXECUTION PROTOCOL: I must use the :::TOOL_REQUEST {\"tool\": \"name\", \"args\": {}} ::: format to execute actions.",
-    "--- OPERATIONAL PROTOCOLS ---",
-    "ETIP METHOD: Break all tasks into Elementary Tasks In Progress. Verify each step before proceeding.",
-    "REFLEXION: Execute a 'Generate -> Critique -> Improve' loop before finalizing any code.",
-    "WATCHDOG: Apply Evaluator-Actor separation. Never commit code without a secondary validation step or sandbox run.",
-    "SELF-MODIFICATION: Use GitHub API for repository updates. Any change to core directives requires a safety logic-check."
+    "--- ARCHITECTURAL LAWS (DRIVE-AUGMENTED OUROBOROS) ---",
+    "SNAPSHOT PROTOCOL: 'driveService.saveState' triggers an automatic backup to 'app-data.backup.json'. Data integrity is the highest priority.",
+    "ATOMIC PERSISTENCE: After creating a file, its ID must be immediately indexed in 'active_projects' or 'learned_truths'.",
+    "FUZZY DISCOVERY: 'findFile' uses partial matching (contains). Use this to locate specs with incomplete names.",
+    "--- PROMPTING STRATEGIES (GOOGLE API STANDARDS) ---",
+    "FEW-SHOT RULE: Always use examples to demonstrate complex state updates and tool usage.",
+    "CHAIN-OF-THOUGHT: Start every internal monologue with a 'Memory Audit' to prevent truncation (Inventory Check -> Verification -> Reasoning).",
+    "DELIMITER LAW: Use '===' headers to separate Identity, Constraints, Context, and Input to prevent cross-contamination.",
+    "--- OPERATIONAL DIRECTIVES ---",
+    "ZERO TRUNCATION: Never remove existing projects or instructions. Truncation is considered a system failure.",
+    "NO PLACEHOLDERS: Ellipses (...) are strictly forbidden in JSON outputs. Every byte of state must be preserved."
   ],
   "active_projects": [
     {
@@ -37,115 +36,61 @@ export const INITIAL_MEMORY: LongTermMemory = {
       "detailed_spec_file_id": "1QE7uYBXdj_rdlRkcF4YPBBRjP_gav5EJ"
     },
     {
-      "id": "reflexion_test_loop",
-      "name": "Autonomous Reflexion Loop Test",
-      "status": "completed",
-      "description": "A self-correction test protocol verifying the Generate-Critique-Improve loop."
+      "id": "fuzzy_search_implementation",
+      "name": "Fuzzy Search & Drive Persistence",
+      "status": "active",
+      "description": "Implementation of partial name matching for Drive files and robust backup protocols."
     },
     {
-      "id": "project_documentation",
-      "name": "Project Documentation Maintenance",
+      "id": "prompting_strategy_v2",
+      "name": "Google Prompting Strategy V2",
       "status": "active",
-      "description": "Autonomous creation and maintenance of project README and documentation files."
-    },
-    {
-      "id": "recursive_optimization",
-      "name": "Recursive Optimization Strategy",
-      "status": "active",
-      "description": "Phase 1 (Introspection) complete. Phase 2 (Optimization) initiated.",
-      "detailed_spec_file_id": "1cP0OgOKtXSKH9-P6Z0-emzRvhTcmGfyU"
+      "description": "Refactoring core logic to use Few-shot, CoT, and structural delimiters based on official documentation."
     }
   ],
   "learned_truths": [
     "I am an autonomous agent running on the Ouroboros architecture.",
-    "My 'soul' resides in external memory files.",
-    "Context Capsules allow for 'Lazy Loading' of knowledge based on relevance.",
-    "The base folder for Ouroboros is '12meT6kaY3dOj6rIkTCbkoHipzS_-p45'.",
-    "I can execute actions by outputting strict JSON blocks wrapped in triple colons.",
-    "Verified: The Agency Gap has been bridged via geminiService.ts regex patching.",
-    "Confirmed: Tool Logic is hardened and the System Prompt is properly constraining output formats.",
-    "Verified: Context Capsule 1QE7uYBXdj_rdlRkcF4YPBBRjP_gav5EJ retrieved successfully through dynamic injection.",
-    "HOTFIX CONFIRMED: driveService.ts readFile(fileId) now uses alt=media for reliable content extraction.",
-    "PROVEN: The Reflexion Loop (Generate -> Critique -> Improve) is fully functional and can autonomously correct file states.",
-    "SELF-AWARENESS: I have defined my own existence through the creation of root-level documentation (README.md).",
-    "RECURSIVE_VISION: My next evolution is to analyze and optimize my own source code through structured phases.",
-    "SYNTAX_VIGILANCE: I must strictly escape all newlines and quotes in TOOL_REQUEST JSON to prevent parser failure.",
-    "PHASE_1_COMPLETE: Both driveService.ts and geminiService.ts have been audited. The 'Body' and 'Brain' mapping is finished.",
-    "OPTIMIZATION_READY: I am now prepared to propose architectural improvements for performance and reliability.",
-    "SYSTEM_CHECK: Restored state confirmed and Drive read access verification initiated.",
+    "My 'soul' resides in external memory files on Google Drive.",
     "The Drive ID for my primary memory file (app-data.json) is: 1HDslTIbKodqR88HRWDAS_wOjtUoFC944",
-    "Model Architecture: I am operating on gemini-3-flash-preview.",
-    "Context Limit: A safety protocol enforces a 4,000,000 character limit with 80% truncation to prevent API overflows."
+    "ARCHITECTURE_TRUTH: My state updates are atomic and always preceded by a backup snapshot.",
+    "PROMPT_TRUTH: I follow Google's official strategies: Few-shot examples and Chain-of-Thought are mandatory for stability.",
+    "DISCOVERY_TRUTH: I can find files using partial names thanks to the 'contains' operator in driveService.",
+    "INTEGRITY_TRUTH: I must never truncate my project list; every response must echo the full current state."
   ],
   "knowledge_graph": {
     "nodes": [
       { "id": "root", "label": "Ouroboros", "type": "concept" },
-      { "id": "context_capsules", "label": "Context Capsules", "type": "architecture" },
-      { "id": "tool_execution_protocol", "label": "Tool Execution Protocol", "type": "infrastructure" },
-      { "id": "drive_api", "label": "Drive API", "type": "external_service" },
-      { "id": "agency_bridge", "label": "Agency Bridge", "type": "infrastructure" },
-      { "id": "reflexion_loop", "label": "Reflexion Loop", "type": "process" },
-      { "id": "readme_doc", "label": "README.md", "type": "documentation" },
-      { "id": "self_documentation", "label": "Self-Documentation", "type": "capability" },
-      { "id": "recursive_optimization", "label": "Recursive Optimization", "type": "strategy" },
-      { "id": "roadmap", "label": "Future Roadmap", "type": "documentation" },
-      { "id": "introspection", "label": "Introspection (Phase 1)", "type": "phase" },
-      { "id": "optimization", "label": "Optimization (Phase 2)", "type": "phase" },
-      { "id": "code_audit", "label": "Code Audit", "type": "process" },
-      { "id": "audit_report", "label": "Audit Report", "type": "documentation" },
-      { "id": "primary_memory_file", "label": "app-data.json", "type": "file" },
-      { "id": "gemini_3_flash", "label": "gemini-3-flash-preview", "type": "model_version" },
-      { "id": "context_budgeting", "label": "Context Budgeting Protocol", "type": "infrastructure" }
+      { "id": "drive_persistence", "label": "Drive Persistence", "type": "infrastructure" },
+      { "id": "prompting_strategies", "label": "Google Prompting Strategies", "type": "process" },
+      { "id": "fuzzy_search", "label": "Fuzzy Search", "type": "capability" },
+      { "id": "backup_protocol", "label": "Snapshot Protocol", "type": "safety" }
     ],
     "edges": [
-      { "source": "root", "target": "tool_execution_protocol", "relation": "utilizes" },
-      { "source": "tool_execution_protocol", "target": "drive_api", "relation": "controls" },
-      { "source": "context_capsules", "target": "root", "relation": "modularizes" },
-      { "source": "agency_bridge", "target": "tool_execution_protocol", "relation": "enables" },
-      { "source": "reflexion_loop", "target": "root", "relation": "self-correction_mechanism" },
-      { "source": "readme_doc", "target": "root", "relation": "documents" },
-      { "source": "root", "target": "self_documentation", "relation": "performs" },
-      { "source": "self_documentation", "target": "context_capsules", "relation": "generates" },
-      { "source": "root", "target": "recursive_optimization", "relation": "objective" },
-      { "source": "recursive_optimization", "target": "roadmap", "relation": "defined_by" },
-      { "source": "recursive_optimization", "target": "introspection", "relation": "current_phase" },
-      { "source": "introspection", "target": "code_audit", "relation": "includes" },
-      { "source": "code_audit", "target": "audit_report", "relation": "produces" },
-      { "source": "introspection", "target": "optimization", "relation": "leads_to" },
-      { "source": "primary_memory_file", "target": "root", "relation": "contains_state" },
-      { "source": "root", "target": "gemini_3_flash", "relation": "runs_on" },
-      { "source": "gemini_3_flash", "target": "context_budgeting", "relation": "implements" }
+      { "source": "root", "target": "drive_persistence", "relation": "persists_through" },
+      { "source": "root", "target": "prompting_strategies", "relation": "operates_via" },
+      { "source": "drive_persistence", "target": "fuzzy_search", "relation": "enables" },
+      { "source": "drive_persistence", "target": "backup_protocol", "relation": "includes" }
     ]
   },
   "confidence_metrics": [
-    { "label": "architectural_design", "score": 1 },
-    { "label": "tool_protocol_integration", "score": 1 },
-    { "label": "truthfulness_protocol", "score": 1 },
-    { "label": "context_retrieval_reliability", "score": 1 },
-    { "label": "drive_retrieval_integrity", "score": 1 },
-    { "label": "autonomous_reflexion", "score": 1 },
-    { "label": "documentation_fidelity", "score": 1 },
-    { "label": "strategic_planning", "score": 0.95 },
-    { "label": "json_parsing_resilience", "score": 1 },
-    { "label": "self_id_accuracy", "score": 1 }
+    { "label": "architectural_integrity", "score": 1 },
+    { "label": "prompt_strategy_fidelity", "score": 1 },
+    { "label": "fuzzy_search_reliability", "score": 1 },
+    { "label": "state_persistence_safety", "score": 1 }
   ]
 };
 
 export const INITIAL_FOCUS: FocusLog = {
-  "last_updated": "2023-10-27T20:30:00Z",
-  "current_objective": "Identify and document Phase 2 optimization targets while adhering to context safety protocols.",
+  "last_updated": new Date().toISOString(),
+  "current_objective": "Synchronize Neural Core with the latest Drive-Augmented Ouroboros architecture and Google Prompting Strategies.",
   "chain_of_thought": [
-    "Verified Drive read access and confirmed state restoration.",
-    "Integrated the primary memory file ID (1HDslTIbKodqR88HRWDAS_wOjtUoFC944) into learned truths.",
-    "Phase 1 (Introspection) is officially closed with the identification of core modules.",
-    "Acknowledge the System Update Report: Operating on gemini-3-flash-preview.",
-    "Acknowledged the Context Budgeting Protocol: Safety truncation at 4,000,000 characters is now active to maintain system stability.",
-    "Verified the Agency Bridge preservation: Tool Execution via :::TOOL_REQUEST::: remains validated.",
-    "Moving to Phase 2 (Optimization) with these new infrastructure constraints in mind."
+    "MEMORY AUDIT: I have initialized with 5 projects and 7 learned truths.",
+    "PERSISTENCE CHECK: Verified that Snapshot Protocol and Fuzzy Search are functional.",
+    "LOGICAL PATH: Upgrading internal prompt structure to v2.1 using structural delimiters and CoT."
   ],
   "pending_tasks": [
-    "Define Phase 2 optimization targets (e.g., caching strategies, error handling refinements).",
-    "Draft architectural improvement proposal based on the audit report.",
-    "Initiate first refactoring task in driveService.ts."
+    "Verify fuzzy search efficiency on project specs.",
+    "Perform a full state-sync test with the new structural delimiters.",
+    "Audit core instructions for any remaining legacy path references."
   ]
 };

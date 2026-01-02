@@ -5,7 +5,9 @@ import { processInteraction } from './services/geminiService';
 import * as driveService from './services/driveService';
 import MemoryPanel from './components/MemoryPanel';
 import FocusPanel from './components/FocusPanel';
-import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Bug, Wrench, X, History } from 'lucide-react';
+import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Bug, Wrench, X, History, Moon, Zap } from 'lucide-react';
+
+const VOLATILE_MEMORY_KEY = 'ouroboros_volatile_memory';
 
 const App: React.FC = () => {
   const [memory, setMemory] = useState<LongTermMemory>(INITIAL_MEMORY);
@@ -19,22 +21,54 @@ const App: React.FC = () => {
   const [isDriveConnected, setIsDriveConnected] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [showRestoreModal, setShowRestoreModal] = useState(false);
+  const [isSleeping, setIsSleeping] = useState(false);
   const [backups, setBackups] = useState<{id: string, name: string}[]>([]);
+  const [recoveryAvailable, setRecoveryAvailable] = useState(false);
   
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  // Persistence: Save to local storage on every state change
   useEffect(() => {
-    driveService.loadGoogleScripts(() => console.log("Google Scripts Loaded"));
+    const volatile = { input, focus, timestamp: Date.now() };
+    localStorage.setItem(VOLATILE_MEMORY_KEY, JSON.stringify(volatile));
+  }, [input, focus]);
+
+  useEffect(() => {
+    driveService.loadGoogleScripts(() => {
+      console.log("Google Scripts Loaded");
+      // Check for recovery
+      const saved = localStorage.getItem(VOLATILE_MEMORY_KEY);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (parsed.input || (parsed.focus && parsed.focus.current_objective !== INITIAL_FOCUS.current_objective)) {
+            setRecoveryAvailable(true);
+          }
+        } catch (e) {}
+      }
+    });
   }, []);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  const handleRecovery = () => {
+    const saved = localStorage.getItem(VOLATILE_MEMORY_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed.input) setInput(parsed.input);
+      if (parsed.focus) setFocus(parsed.focus);
+      setMessages(prev => [...prev, { role: 'system', content: 'Volatile memory recovered from local storage.', timestamp: Date.now() }]);
+    }
+    setRecoveryAvailable(false);
+  };
+
   const handleConnectDrive = async () => {
     try {
       await driveService.authenticate();
       setIsDriveConnected(true);
+      setIsSleeping(false);
       setMessages(prev => [...prev, { role: 'system', content: 'Authentication Successful.', timestamp: Date.now() }]);
       await handleSyncDown();
     } catch (err: any) {
@@ -53,8 +87,12 @@ const App: React.FC = () => {
       } else {
         setMessages(prev => [...prev, { role: 'system', content: 'No state found. Initializing defaults.', timestamp: Date.now() }]);
       }
-    } catch (err) {
-      setMessages(prev => [...prev, { role: 'system', content: 'Failed to load from Drive.', timestamp: Date.now() }]);
+    } catch (err: any) {
+      if (err instanceof driveService.SessionExpiredError) {
+        setIsSleeping(true);
+      } else {
+        setMessages(prev => [...prev, { role: 'system', content: 'Failed to load from Drive.', timestamp: Date.now() }]);
+      }
     } finally {
       setIsSyncing(false);
       setShowRestoreModal(false);
@@ -70,8 +108,12 @@ const App: React.FC = () => {
       if (isManualBackup) {
           setMessages(prev => [...prev, { role: 'system', content: `Cloud Backup Created: ${id}`, timestamp: Date.now() }]);
       }
-    } catch (err) {
-      setMessages(prev => [...prev, { role: 'system', content: 'WARNING: Drive Sync Failed.', timestamp: Date.now() }]);
+    } catch (err: any) {
+      if (err instanceof driveService.SessionExpiredError) {
+        setIsSleeping(true);
+      } else {
+        setMessages(prev => [...prev, { role: 'system', content: 'WARNING: Drive Sync Failed.', timestamp: Date.now() }]);
+      }
     } finally {
       setIsSyncing(false);
     }
@@ -79,34 +121,78 @@ const App: React.FC = () => {
 
   const handleOpenRestore = async () => {
       setIsSyncing(true);
-      const files = await driveService.listJSONFiles();
-      setBackups(files);
-      setIsSyncing(false);
-      setShowRestoreModal(true);
+      try {
+        const files = await driveService.listJSONFiles();
+        setBackups(files);
+        setShowRestoreModal(true);
+      } catch (err: any) {
+        if (err instanceof driveService.SessionExpiredError) setIsSleeping(true);
+      } finally {
+        setIsSyncing(false);
+      }
   };
 
   const handleSendMessage = async () => {
     if (!input.trim() || isLoading || !isDriveConnected) return;
     const userMsg: ChatMessage = { role: 'user', content: input, timestamp: Date.now() };
     setMessages(prev => [...prev, userMsg]);
+    const currentInput = input;
     setInput('');
     setIsLoading(true);
 
     try {
-      const { response, newMemory, newFocus } = await processInteraction(input, memory, focus);
+      const { response, newMemory, newFocus } = await processInteraction(currentInput, memory, focus);
       setMemory(newMemory);
       setFocus(newFocus);
       setMessages(prev => [...prev, { role: 'model', content: response, timestamp: Date.now() }]);
       await handleSyncUp(newMemory, newFocus);
     } catch (error: any) {
-      setMessages(prev => [...prev, { role: 'system', content: `Neural Error: ${error.message}`, timestamp: Date.now() }]);
+      if (error instanceof driveService.SessionExpiredError) {
+        setIsSleeping(true);
+        setInput(currentInput); // Put it back so they can retry
+      } else {
+        setMessages(prev => [...prev, { role: 'system', content: `Neural Error: ${error.message}`, timestamp: Date.now() }]);
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="flex h-screen w-full bg-[#09090b] text-zinc-300 font-sans overflow-hidden">
+    <div className="flex h-screen w-full bg-[#09090b] text-zinc-300 font-sans overflow-hidden relative">
+      
+      {/* Recovery Prompt */}
+      {recoveryAvailable && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[60] bg-indigo-900 border border-indigo-500 rounded-full px-4 py-2 flex items-center gap-3 shadow-2xl shadow-indigo-500/50">
+           <span className="text-xs font-bold text-white uppercase tracking-tighter">Unsaved session found</span>
+           <div className="flex gap-2">
+              <button onClick={handleRecovery} className="bg-white text-indigo-900 text-[10px] font-bold px-3 py-1 rounded-full hover:bg-indigo-100 transition-colors">RECOVER</button>
+              <button onClick={() => { setRecoveryAvailable(false); localStorage.removeItem(VOLATILE_MEMORY_KEY); }} className="text-white/60 hover:text-white transition-colors"><X size={14}/></button>
+           </div>
+        </div>
+      )}
+
+      {/* Sleep Mode Overlay */}
+      {isSleeping && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-xl animate-in fade-in duration-500">
+           <div className="text-center space-y-6 max-w-sm px-6">
+              <div className="relative inline-block">
+                <Moon size={64} className="text-indigo-500 animate-pulse mx-auto" />
+                <Zap size={24} className="text-amber-500 absolute -top-1 -right-1" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-white tracking-tighter">Digital Sleep</h2>
+                <p className="text-zinc-500 text-sm mt-2 leading-relaxed">Your session token has expired. All thought processes are preserved in local volatile memory. Wake the core to continue.</p>
+              </div>
+              <button 
+                onClick={handleConnectDrive}
+                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2 transition-all transform hover:scale-[1.02] active:scale-95"
+              >
+                <Zap size={18} /> WAKE SYSTEM CORE
+              </button>
+           </div>
+        </div>
+      )}
       
       {/* Restore Modal */}
       {showRestoreModal && (
@@ -250,6 +336,7 @@ const App: React.FC = () => {
                         setMemory(INITIAL_MEMORY);
                         setFocus(INITIAL_FOCUS);
                         setMessages([{ role: 'system', content: 'State reset to version 1.3 defaults.', timestamp: Date.now() }]);
+                        localStorage.removeItem(VOLATILE_MEMORY_KEY);
                     }
                 }} className="p-2 text-red-900 hover:text-red-500 hover:bg-red-900/20 rounded-md transition-colors" title="Reset Local State">
                     <Trash2 size={18} />
