@@ -63,3 +63,20 @@ export interface ChatMessage {
   content: string;
   timestamp: number;
 }
+
+// Interfaces for the Relink/Manual Mapping system
+export interface RelinkCandidate {
+  projectName: string;
+  projectId: string;
+  currentId?: string;
+  proposedId: string | null;
+  proposedName?: string;
+  status: 'match_found' | 'no_match' | 'manual_selection';
+}
+
+export interface UnlinkedFileCandidate {
+  fileId: string;
+  fileName: string;
+  mimeType: string;
+  assignedProjectId: string | null;
+}

@@ -1,23 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { INITIAL_MEMORY, INITIAL_FOCUS } from './constants';
-import { LongTermMemory, FocusLog, ChatMessage, AppData } from './types';
+import { LongTermMemory, FocusLog, ChatMessage } from './types';
 import { processInteraction, checkGeminiConfig } from './services/geminiService';
 import * as driveService from './services/driveService';
 import MemoryPanel from './components/MemoryPanel';
 import FocusPanel from './components/FocusPanel';
-import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Wrench, X, History, Moon, Zap, AlertTriangle, Settings, FileJson, Upload, FileUp, Link, FileSearch, Check, AlertCircle } from 'lucide-react';
+import RelinkModal from './components/RelinkModal';
+import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Wrench, X, History, Moon, Zap, AlertTriangle, FileJson, Upload, FileUp, Link } from 'lucide-react';
+
+// Hooks
+import { useDriveOperations } from './hooks/useDriveOperations';
+import { useArtifacts } from './hooks/useArtifacts';
+import { useSystemActions } from './hooks/useSystemActions';
 
 const VOLATILE_MEMORY_KEY = 'ouroboros_volatile_memory';
 const CHAT_HISTORY_KEY = 'ouroboros_chat_history';
-
-interface RelinkCandidate {
-  projectName: string;
-  projectId: string;
-  currentId?: string;
-  proposedId: string | null;
-  proposedName?: string;
-  status: 'match_found' | 'no_match' | 'manual_selection';
-}
 
 const App: React.FC = () => {
   const [configError, setConfigError] = useState<string | null>(null);
@@ -32,20 +29,6 @@ const App: React.FC = () => {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'memory' | 'focus'>('memory');
-  const [isDriveConnected, setIsDriveConnected] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
-  
-  // Modals
-  const [showRestoreModal, setShowRestoreModal] = useState(false);
-  const [showImportModal, setShowImportModal] = useState(false);
-  const [showRelinkModal, setShowRelinkModal] = useState(false);
-  
-  // Data for Modals
-  const [importText, setImportText] = useState('');
-  const [backups, setBackups] = useState<{id: string, name: string}[]>([]);
-  const [relinkCandidates, setRelinkCandidates] = useState<RelinkCandidate[]>([]);
-  const [allDriveFiles, setAllDriveFiles] = useState<{id: string, name: string}[]>([]);
-
   const [isSleeping, setIsSleeping] = useState(false);
   const [recoveryAvailable, setRecoveryAvailable] = useState(false);
   
@@ -53,14 +36,67 @@ const App: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
-    // Check configuration on mount
-    try {
-      checkGeminiConfig();
-    } catch (e: any) {
-      setConfigError(e.message);
-    }
+  const addSystemMessage = (content: string) => {
+    setMessages(prev => [...prev, { role: 'system', content, timestamp: Date.now() }]);
+  };
 
+  // --- HOOKS INTEGRATION ---
+  const { 
+    isDriveConnected, 
+    isSyncing, 
+    setIsSyncing, 
+    handleConnectDrive, 
+    handleSyncDown, 
+    handleSyncUp, 
+    backups, 
+    fetchBackups, 
+    showRestoreModal, 
+    setShowRestoreModal 
+  } = useDriveOperations({ 
+    setMemory, 
+    setFocus, 
+    addSystemMessage, 
+    onSleep: () => setIsSleeping(true) 
+  });
+
+  const {
+    showRelinkModal,
+    setShowRelinkModal,
+    relinkCandidates,
+    unlinkedFiles,
+    allDriveFiles,
+    handleSmartRelink,
+    handleFileUpload
+  } = useArtifacts({
+    memory,
+    isDriveConnected,
+    setIsSyncing,
+    addSystemMessage
+  });
+
+  const {
+    showImportModal,
+    setShowImportModal,
+    importText,
+    setImportText,
+    handleClearChat,
+    handleNuclearReset,
+    handleDownloadSnapshot,
+    handleManualImport
+  } = useSystemActions({
+    memory,
+    focus,
+    setMemory,
+    setFocus,
+    setMessages,
+    addSystemMessage,
+    onSyncUp: handleSyncUp
+  });
+
+  // --- INITIALIZATION & EFFECTS ---
+
+  useEffect(() => {
+    try { checkGeminiConfig(); } catch (e: any) { setConfigError(e.message); }
     driveService.loadGoogleScripts(() => {
       console.log("Google Scripts Loaded");
       const saved = localStorage.getItem(VOLATILE_MEMORY_KEY);
@@ -88,24 +124,12 @@ const App: React.FC = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Auto-resize textarea
   useEffect(() => {
     if (textareaRef.current) {
         textareaRef.current.style.height = 'auto';
         textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 200) + 'px';
     }
   }, [input]);
-
-  const addSystemMessage = (content: string) => {
-    setMessages(prev => [...prev, { role: 'system', content, timestamp: Date.now() }]);
-  };
-
-  const handleClearChat = () => {
-    if (window.confirm("Clear all chat messages? This will not affect Drive memory.")) {
-        setMessages([]);
-        localStorage.removeItem(CHAT_HISTORY_KEY);
-    }
-  };
 
   const handleRecovery = () => {
     const saved = localStorage.getItem(VOLATILE_MEMORY_KEY);
@@ -116,193 +140,6 @@ const App: React.FC = () => {
       addSystemMessage('Volatile memory recovered from local storage.');
     }
     setRecoveryAvailable(false);
-  };
-
-  const handleConnectDrive = async () => {
-    try {
-      driveService.checkConfig(); 
-      await driveService.authenticate();
-      setIsDriveConnected(true);
-      setIsSleeping(false);
-      addSystemMessage('Authentication Successful. Neural link established.');
-      await handleSyncDown();
-    } catch (err: any) {
-      addSystemMessage(`Drive Integration Failed: ${err.message || 'Unknown'}`);
-    }
-  };
-
-  const handleSyncDown = async (fileId?: string) => {
-    setIsSyncing(true);
-    try {
-      const data = await driveService.loadState(fileId);
-      if (data) {
-        setMemory(data.memory);
-        setFocus(data.focus);
-        addSystemMessage(`Memory loaded from ${fileId ? 'Backup Fragment' : 'Primary Drive State'}.`);
-      } else {
-        addSystemMessage('No existing state found on Drive. Initializing default Ouroboros matrix.');
-      }
-    } catch (err: any) {
-      if (err instanceof driveService.SessionExpiredError) {
-        setIsSleeping(true);
-      } else {
-        addSystemMessage('Failed to load state from Drive. Check connection.');
-      }
-    } finally {
-      setIsSyncing(false);
-      setShowRestoreModal(false);
-    }
-  };
-
-  const handleSyncUp = async (newMemory: LongTermMemory, newFocus: FocusLog, isManualBackup: boolean = false) => {
-    if (!isDriveConnected) return;
-    setIsSyncing(true);
-    try {
-      const payload: AppData = { app_version: "1.3.1", last_sync_timestamp: Date.now(), memory: newMemory, focus: newFocus };
-      await driveService.saveState(payload, isManualBackup);
-      
-      if (isManualBackup) {
-          addSystemMessage('Snapshot Protocol: Manual backup successfully stored in Drive.');
-      }
-    } catch (err: any) {
-      if (err instanceof driveService.SessionExpiredError) {
-        setIsSleeping(true);
-      } else {
-        addSystemMessage(`Sync Failure: ${err.message}`);
-      }
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
-  const handleManualImport = async () => {
-    try {
-        const parsed = JSON.parse(importText);
-        if (!parsed.memory || !parsed.focus) {
-            throw new Error("Invalid format. JSON must contain 'memory' and 'focus' root keys.");
-        }
-        if (window.confirm("Overwrite current mental state with this import? This will be saved to Drive immediately.")) {
-            setMemory(parsed.memory);
-            setFocus(parsed.focus);
-            setImportText('');
-            setShowImportModal(false);
-            addSystemMessage('Manual Import: State injected successfully. Uplinking to Drive...');
-            await handleSyncUp(parsed.memory, parsed.focus, false);
-            
-            setTimeout(() => {
-                if (window.confirm("Legacy State Detected. Do you want to open the Smart Relink Interface to fix file IDs?")) {
-                    handleSmartRelink(parsed.memory);
-                }
-            }, 500);
-        }
-    } catch (e: any) {
-        alert(`Import Failed: ${e.message}`);
-    }
-  };
-
-  const handleSmartRelink = async (currentMem: LongTermMemory = memory) => {
-      if (!isDriveConnected) return;
-      setIsSyncing(true);
-      addSystemMessage("Initiating Smart Relink Protocol (Fetching File Manifest)...");
-      
-      try {
-          // 1. Fetch ALL available files to allow manual selection
-          const allFiles = await driveService.listAllFiles();
-          setAllDriveFiles(allFiles);
-
-          const candidates: RelinkCandidate[] = [];
-
-          for (const project of currentMem.active_projects) {
-              let matchId = null;
-              let matchName = undefined;
-
-              // Auto-Match Heuristics
-              // 1. Check if ID matches a filename
-              const exactIdMatch = allFiles.find(f => f.name.includes(project.id));
-              if (exactIdMatch) { matchId = exactIdMatch.id; matchName = exactIdMatch.name; }
-
-              // 2. Check if Name matches
-              if (!matchId) {
-                  const nameMatch = allFiles.find(f => f.name.includes(project.name));
-                  if (nameMatch) { matchId = nameMatch.id; matchName = nameMatch.name; }
-              }
-
-              // 3. Partial Name Match
-              if (!matchId) {
-                   const words = project.name.split(' ');
-                   if (words.length > 1) {
-                       const shortName = words.slice(0, Math.min(3, words.length)).join(' ');
-                       const fuzzyMatch = allFiles.find(f => f.name.includes(shortName));
-                       if (fuzzyMatch) { matchId = fuzzyMatch.id; matchName = fuzzyMatch.name; }
-                   }
-              }
-
-              candidates.push({
-                  projectName: project.name,
-                  projectId: project.id,
-                  currentId: project.detailed_spec_file_id,
-                  proposedId: matchId, // Can be null
-                  proposedName: matchName,
-                  status: matchId ? 'match_found' : 'no_match'
-              });
-          }
-
-          setRelinkCandidates(candidates);
-          setIsSyncing(false);
-          setShowRelinkModal(true); // OPEN MODAL instead of auto-sending
-
-      } catch (e: any) {
-          setIsSyncing(false);
-          addSystemMessage(`Scan Failed: ${e.message}`);
-      }
-  };
-
-  const applyRelinkChanges = () => {
-      // Filter for actual changes (valid new ID + different from old ID)
-      const updates = relinkCandidates.filter(c => c.proposedId && c.proposedId !== c.currentId);
-      
-      setShowRelinkModal(false);
-
-      if (updates.length > 0) {
-          const updateString = updates.map(u => `- Project "${u.projectName}": Change ID to "${u.proposedId}" (File: ${u.proposedName})`).join('\n');
-          const prompt = `SYSTEM MAINTENANCE: User has manually verified file associations via Relink Interface. \n\nPlease update the 'active_projects' list with these VALID file IDs immediately:\n${updateString}\n\nPreserve all other project data exactly as is.`;
-          
-          setInput(prompt);
-          setTimeout(() => {
-              handleSendMessage(prompt); 
-          }, 100);
-      } else {
-          addSystemMessage("Relink cancelled or no changes required.");
-      }
-  };
-
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
-
-    setIsSyncing(true);
-    let successCount = 0;
-    
-    for (let i = 0; i < files.length; i++) {
-        try {
-            await driveService.uploadArtifact(files[i]);
-            successCount++;
-        } catch (e: any) {
-            addSystemMessage(`Failed to upload ${files[i].name}: ${e.message}`);
-        }
-    }
-    
-    addSystemMessage(`Artifact Injection: ${successCount} files uploaded successfully.`);
-    setIsSyncing(false);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-
-    if (successCount > 0) {
-        setTimeout(() => {
-            if (window.confirm("Artifacts uploaded. Do you want to open the Smart Relink Interface to map these files?")) {
-                handleSmartRelink();
-            }
-        }, 500);
-    }
   };
 
   const handleSendMessage = async (overrideInput?: string) => {
@@ -332,6 +169,17 @@ const App: React.FC = () => {
     }
   };
 
+  const handleApplyRelinkUpdates = (updates: string[]) => {
+    setShowRelinkModal(false);
+    if (updates.length > 0) {
+        const prompt = `SYSTEM MAINTENANCE: User has manually verified file associations via Relink Interface. \n\nPlease update the 'active_projects' list with these VALID file IDs immediately:\n${updates.join('\n')}\n\nPreserve all other project data exactly as is.`;
+        setInput(prompt);
+        setTimeout(() => handleSendMessage(prompt), 100);
+    } else {
+        addSystemMessage("Relink cancelled or no changes required.");
+    }
+  };
+
   if (configError) {
     return (
       <div className="flex h-screen w-full items-center justify-center bg-zinc-950 p-6">
@@ -351,7 +199,7 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen w-full bg-zinc-950 text-zinc-300 font-sans overflow-hidden relative">
-      <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" multiple />
+      <input type="file" ref={fileInputRef} onChange={(e) => handleFileUpload(e.target.files)} className="hidden" multiple />
 
       {/* Recovery Prompt */}
       {recoveryAvailable && (
@@ -379,86 +227,15 @@ const App: React.FC = () => {
       )}
       
       {/* Relink Modal */}
-      {showRelinkModal && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/90 backdrop-blur-md p-6">
-            <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[90vh]">
-                <div className="p-5 border-b border-zinc-800 bg-zinc-900/50 flex justify-between items-center">
-                    <div>
-                        <h2 className="text-sm font-bold uppercase tracking-widest flex items-center gap-2 text-purple-400">
-                            <FileSearch size={16} /> Relink Interface
-                        </h2>
-                        <p className="text-xs text-zinc-500 mt-1">Review and approve file associations before updating memory.</p>
-                    </div>
-                    <button onClick={() => setShowRelinkModal(false)} className="text-zinc-500 hover:text-white"><X size={20} /></button>
-                </div>
-                
-                <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">
-                    <table className="w-full border-collapse">
-                        <thead className="text-xs uppercase text-zinc-500 font-bold bg-zinc-950 sticky top-0">
-                            <tr>
-                                <th className="p-3 text-left">Project Name</th>
-                                <th className="p-3 text-left">Current ID (Memory)</th>
-                                <th className="p-3 text-left">Proposed File Link</th>
-                                <th className="p-3 text-center">Status</th>
-                            </tr>
-                        </thead>
-                        <tbody className="text-sm">
-                            {relinkCandidates.map((candidate, idx) => (
-                                <tr key={idx} className="border-b border-zinc-800/50 hover:bg-zinc-800/30">
-                                    <td className="p-3 text-zinc-300 font-medium">{candidate.projectName}</td>
-                                    <td className="p-3">
-                                        <div className="font-mono text-[10px] text-zinc-600 truncate w-32" title={candidate.currentId}>
-                                            {candidate.currentId || 'NONE'}
-                                        </div>
-                                    </td>
-                                    <td className="p-3">
-                                        <select 
-                                            className={`w-full bg-black/40 border rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-purple-500 outline-none ${
-                                                candidate.proposedId && candidate.proposedId !== candidate.currentId ? 'border-purple-500/50 text-purple-200' : 'border-zinc-700 text-zinc-400'
-                                            }`}
-                                            value={candidate.proposedId || ''}
-                                            onChange={(e) => {
-                                                const newId = e.target.value;
-                                                const fileObj = allDriveFiles.find(f => f.id === newId);
-                                                const updated = [...relinkCandidates];
-                                                updated[idx] = {
-                                                    ...candidate,
-                                                    proposedId: newId || null,
-                                                    proposedName: fileObj?.name,
-                                                    status: 'manual_selection'
-                                                };
-                                                setRelinkCandidates(updated);
-                                            }}
-                                        >
-                                            <option value="">-- No Association / Create New --</option>
-                                            {allDriveFiles.map(f => (
-                                                <option key={f.id} value={f.id}>{f.name}</option>
-                                            ))}
-                                        </select>
-                                    </td>
-                                    <td className="p-3 text-center">
-                                        {candidate.status === 'match_found' && <span className="text-green-500 text-[10px] uppercase font-bold flex justify-center items-center gap-1"><Check size={10} /> Auto</span>}
-                                        {candidate.status === 'no_match' && <span className="text-zinc-600 text-[10px] uppercase font-bold flex justify-center items-center gap-1"><AlertCircle size={10} /> None</span>}
-                                        {candidate.status === 'manual_selection' && <span className="text-purple-400 text-[10px] uppercase font-bold flex justify-center items-center gap-1"><Check size={10} /> Manual</span>}
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-
-                <div className="p-5 border-t border-zinc-800 bg-zinc-900/50 flex justify-end gap-3">
-                    <button onClick={() => setShowRelinkModal(false)} className="px-4 py-2 text-xs font-bold text-zinc-400 hover:text-white">CANCEL</button>
-                    <button 
-                        onClick={applyRelinkChanges}
-                        className="bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold px-6 py-2 rounded-lg transition-all shadow-lg shadow-purple-500/20 flex items-center gap-2"
-                    >
-                        APPLY CHANGES
-                    </button>
-                </div>
-            </div>
-        </div>
-      )}
+      <RelinkModal 
+          isOpen={showRelinkModal}
+          onClose={() => setShowRelinkModal(false)}
+          onConfirm={handleApplyRelinkUpdates}
+          initialCandidates={relinkCandidates}
+          initialUnlinkedFiles={unlinkedFiles}
+          allDriveFiles={allDriveFiles}
+          activeProjects={memory.active_projects}
+      />
 
       {/* Restore Modal */}
       {showRestoreModal && (
@@ -497,7 +274,7 @@ const App: React.FC = () => {
                   </div>
                   <div className="p-4 border-t border-zinc-800 bg-zinc-900/50 flex justify-end gap-2">
                       <button onClick={() => setShowImportModal(false)} className="px-4 py-2 text-xs font-bold text-zinc-400 hover:text-white">CANCEL</button>
-                      <button onClick={handleManualImport} disabled={!importText.trim()} className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold px-6 py-2 rounded-lg transition-all">INJECT MEMORY</button>
+                      <button onClick={() => handleManualImport((mem) => setTimeout(() => { if (window.confirm("Legacy State Detected. Do you want to open the Smart Relink Interface to fix file IDs?")) handleSmartRelink(mem); }, 500))} disabled={!importText.trim()} className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold px-6 py-2 rounded-lg transition-all">INJECT MEMORY</button>
                   </div>
               </div>
           </div>
@@ -523,13 +300,13 @@ const App: React.FC = () => {
                   </div>
               </div>
               <div className="flex gap-2">
-                  <button onClick={handleClearChat} className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-500 hover:text-red-400 rounded-md border border-zinc-800 transition-colors" title="Clear Chat History"><Trash2 size={14} /></button>
+                  <button onClick={() => handleClearChat(CHAT_HISTORY_KEY)} className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-500 hover:text-red-400 rounded-md border border-zinc-800 transition-colors" title="Clear Chat History"><Trash2 size={14} /></button>
                   {isDriveConnected ? (
                       <div className="flex gap-1">
                         <button onClick={() => fileInputRef.current?.click()} className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-blue-400 hover:text-blue-300 rounded-md border border-zinc-800 transition-colors" title="Upload Artifacts"><FileUp size={14} /></button>
                         <button onClick={() => handleSmartRelink()} className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-purple-400 hover:text-purple-300 rounded-md border border-zinc-800 transition-colors" title="Scan & Relink IDs"><Link size={14} /></button>
                         <button onClick={() => setShowImportModal(true)} className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-emerald-400 rounded-md border border-zinc-800 transition-colors" title="Import Legacy JSON"><FileJson size={14} /></button>
-                        <button onClick={() => { driveService.listJSONFiles().then(files => { setBackups(files); setShowRestoreModal(true); }); }} className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-amber-500 rounded-md border border-zinc-800 transition-colors" title="Restore"><Wrench size={14} /></button>
+                        <button onClick={fetchBackups} className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-amber-500 rounded-md border border-zinc-800 transition-colors" title="Restore"><Wrench size={14} /></button>
                       </div>
                   ) : (
                       <button onClick={handleConnectDrive} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold px-3 py-1.5 rounded-md transition-all shadow-lg shadow-indigo-500/10"><LogIn size={12} /> CONNECT DRIVE</button>
@@ -577,7 +354,7 @@ const App: React.FC = () => {
                     {isSyncing ? <Cloud size={10} className="text-indigo-500 animate-pulse" /> : <HardDrive size={10} />}
                     {isSyncing ? "Uplinking to Drive..." : "Sync stable"}
                 </div>
-                <div className="text-[9px] text-zinc-700 font-mono">v1.3.3-relink</div>
+                <div className="text-[9px] text-zinc-700 font-mono">v1.3.5-relink-modular</div>
               </div>
           </footer>
         </section>
@@ -598,24 +375,9 @@ const App: React.FC = () => {
                   <button onClick={() => handleSyncUp(memory, focus, true)} disabled={isSyncing || !isDriveConnected} className="p-2 text-indigo-400 hover:bg-indigo-500/10 rounded-md transition-colors disabled:opacity-30" title="Snapshot to Drive">
                       <Cloud size={18} className={isSyncing ? 'animate-bounce' : ''} />
                   </button>
-                  <button onClick={() => {
-                      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ memory, focus }, null, 2));
-                      const dl = document.createElement('a');
-                      dl.setAttribute("href", dataStr);
-                      dl.setAttribute("download", `ouroboros_backup_${new Date().toISOString().split('T')[0]}.json`);
-                      dl.click();
-                      addSystemMessage('Local storage: State exported as JSON file.');
-                  }} className="p-2 text-zinc-500 hover:text-zinc-300 rounded-md transition-colors"><Download size={18} /></button>
+                  <button onClick={handleDownloadSnapshot} className="p-2 text-zinc-500 hover:text-zinc-300 rounded-md transition-colors"><Download size={18} /></button>
                   <div className="h-4 w-px bg-zinc-800 mx-2"></div>
-                  <button onClick={() => {
-                      if(window.confirm("Nuclear reset? This wipes local volatile state and resets session.")) {
-                          setMemory(INITIAL_MEMORY);
-                          setFocus(INITIAL_FOCUS);
-                          localStorage.removeItem(VOLATILE_MEMORY_KEY);
-                          localStorage.removeItem(CHAT_HISTORY_KEY);
-                          window.location.reload();
-                      }
-                  }} className="p-2 text-zinc-700 hover:text-red-500 transition-colors" title="Nuclear Reset"><Trash2 size={18} /></button>
+                  <button onClick={() => handleNuclearReset(VOLATILE_MEMORY_KEY, CHAT_HISTORY_KEY)} className="p-2 text-zinc-700 hover:text-red-500 transition-colors" title="Nuclear Reset"><Trash2 size={18} /></button>
               </div>
           </nav>
 
