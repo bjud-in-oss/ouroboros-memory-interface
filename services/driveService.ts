@@ -1,9 +1,17 @@
 import { AppData } from '../types';
 import { INITIAL_MEMORY, INITIAL_FOCUS } from '../constants';
 
-const ENV_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-const FALLBACK_CLIENT_ID = '765827205160-ft7dv2ud5ruf2tgft4jvt68dm7eboei6.apps.googleusercontent.com';
-const CLIENT_ID = ENV_CLIENT_ID && ENV_CLIENT_ID.length > 5 ? ENV_CLIENT_ID : FALLBACK_CLIENT_ID;
+// Robust environment variable access for various environments (Vite, Process, etc.)
+const getEnvVar = (name: string) => {
+  const vitePrefix = `VITE_${name}`;
+  return (import.meta as any).env?.[vitePrefix] || 
+         (import.meta as any).env?.[name] || 
+         process.env[vitePrefix] || 
+         process.env[name] || 
+         '';
+};
+
+const CLIENT_ID = getEnvVar('GOOGLE_CLIENT_ID');
 
 const DISCOVERY_DOCS = ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'];
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
@@ -20,6 +28,13 @@ export class SessionExpiredError extends Error {
     this.name = "SessionExpiredError";
   }
 }
+
+export const checkConfig = () => {
+  const id = getEnvVar('GOOGLE_CLIENT_ID');
+  if (!id || id.length < 10) {
+    throw new Error("Missing VITE_GOOGLE_CLIENT_ID. Please check your .env file or Netlify environment variables.");
+  }
+};
 
 const accessToken = () => {
   const token = (window as any).gapi?.client?.getToken();
@@ -57,26 +72,49 @@ export const loadGoogleScripts = (callback: () => void) => {
   script2.defer = true;
   script2.onload = () => {
     try {
-      tokenClient = (window as any).google.accounts.oauth2.initTokenClient({
-        client_id: CLIENT_ID,
-        scope: SCOPES,
-        callback: () => {}, 
-      });
+      const id = getEnvVar('GOOGLE_CLIENT_ID');
+      if (id) {
+        tokenClient = (window as any).google.accounts.oauth2.initTokenClient({
+          client_id: id,
+          scope: SCOPES,
+          callback: () => {}, 
+        });
+      }
       gisInited = true;
       if (gapiInited) callback();
-    } catch (err) { console.error("GIS Init Error:", err); }
+    } catch (err) { 
+      console.error("GIS Init Error:", err);
+    }
   };
   document.body.appendChild(script2);
 };
 
 export const authenticate = (): Promise<void> => {
   return new Promise((resolve, reject) => {
-    if (!tokenClient) return reject('Google Scripts not loaded');
-    tokenClient.callback = async (resp: any) => {
-      if (resp.error) reject(resp);
-      else resolve();
-    };
-    tokenClient.requestAccessToken({ prompt: 'consent' });
+    try {
+      checkConfig();
+      if (!tokenClient) {
+        // Retry initialization if scripts are loaded but tokenClient wasn't created
+        const id = getEnvVar('GOOGLE_CLIENT_ID');
+        if (id && (window as any).google?.accounts?.oauth2) {
+           tokenClient = (window as any).google.accounts.oauth2.initTokenClient({
+            client_id: id,
+            scope: SCOPES,
+            callback: () => {}, 
+          });
+        } else {
+          return reject(new Error('Google Identity Services not initialized. Check your Client ID.'));
+        }
+      }
+      
+      tokenClient.callback = async (resp: any) => {
+        if (resp.error) reject(resp);
+        else resolve();
+      };
+      tokenClient.requestAccessToken({ prompt: 'consent' });
+    } catch (e) {
+      reject(e);
+    }
   });
 };
 
@@ -88,7 +126,6 @@ export const ensureFolderExists = async (): Promise<string> => {
       spaces: 'drive',
     });
     
-    // Check for 401 manually since this is a gapi call
     if (response.status === 401) throw new SessionExpiredError("Session Expired during folder check");
     
     const files = response.result.files;
@@ -214,22 +251,4 @@ export const loadState = async (fileId?: string): Promise<AppData | null> => {
 export const findFile = async (name: string): Promise<string | null> => {
   const folderId = await ensureFolderExists();
   return await findFileId(name, folderId, true);
-};
-
-export const runDiagnostics = async (): Promise<string> => {
-  try {
-    const folderId = await ensureFolderExists();
-    const appFileId = await findFileId(FILE_NAME, folderId);
-    return `Diagnostic: Folder OK (${folderId}), AppData: ${appFileId || 'Not Found'}`;
-  } catch (err: any) { 
-    if (err.name === "SessionExpiredError") throw err;
-    return `Error: ${err.message}`; 
-  }
-};
-
-export const performSurgicalInjection = async (): Promise<string> => {
-  const folderId = await ensureFolderExists();
-  const payload: AppData = { app_version: "1.3.0", last_sync_timestamp: Date.now(), memory: INITIAL_MEMORY, focus: INITIAL_FOCUS };
-  const id = await createFile(FILE_NAME, payload, folderId, 'application/json');
-  return `Injection successful: ${id}`;
 };

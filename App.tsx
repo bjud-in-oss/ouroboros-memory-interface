@@ -1,16 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { INITIAL_MEMORY, INITIAL_FOCUS } from './constants';
 import { LongTermMemory, FocusLog, ChatMessage, AppData } from './types';
-import { processInteraction } from './services/geminiService';
+import { processInteraction, checkGeminiConfig } from './services/geminiService';
 import * as driveService from './services/driveService';
 import MemoryPanel from './components/MemoryPanel';
 import FocusPanel from './components/FocusPanel';
-import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Wrench, X, History, Moon, Zap, CheckCircle2, MessageSquareX } from 'lucide-react';
+import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Wrench, X, History, Moon, Zap, AlertTriangle, Settings } from 'lucide-react';
 
 const VOLATILE_MEMORY_KEY = 'ouroboros_volatile_memory';
 const CHAT_HISTORY_KEY = 'ouroboros_chat_history';
 
 const App: React.FC = () => {
+  const [configError, setConfigError] = useState<string | null>(null);
   const [memory, setMemory] = useState<LongTermMemory>(INITIAL_MEMORY);
   const [focus, setFocus] = useState<FocusLog>(INITIAL_FOCUS);
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
@@ -31,18 +32,16 @@ const App: React.FC = () => {
   
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // Persist volatile state (input/focus)
   useEffect(() => {
-    const volatile = { input, focus, timestamp: Date.now() };
-    localStorage.setItem(VOLATILE_MEMORY_KEY, JSON.stringify(volatile));
-  }, [input, focus]);
+    // Check configuration on mount
+    try {
+      checkGeminiConfig();
+      // We don't block the whole app for missing Drive config immediately 
+      // unless Gemini is also missing. Gemini is the "heart".
+    } catch (e: any) {
+      setConfigError(e.message);
+    }
 
-  // Persist Chat History
-  useEffect(() => {
-    localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(messages));
-  }, [messages]);
-
-  useEffect(() => {
     driveService.loadGoogleScripts(() => {
       console.log("Google Scripts Loaded");
       const saved = localStorage.getItem(VOLATILE_MEMORY_KEY);
@@ -56,6 +55,15 @@ const App: React.FC = () => {
       }
     });
   }, []);
+
+  useEffect(() => {
+    const volatile = { input, focus, timestamp: Date.now() };
+    localStorage.setItem(VOLATILE_MEMORY_KEY, JSON.stringify(volatile));
+  }, [input, focus]);
+
+  useEffect(() => {
+    localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(messages));
+  }, [messages]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -85,13 +93,15 @@ const App: React.FC = () => {
 
   const handleConnectDrive = async () => {
     try {
+      // checkConfig will throw if VITE_GOOGLE_CLIENT_ID is missing
+      driveService.checkConfig(); 
       await driveService.authenticate();
       setIsDriveConnected(true);
       setIsSleeping(false);
       addSystemMessage('Authentication Successful. Neural link established.');
       await handleSyncDown();
     } catch (err: any) {
-      addSystemMessage(`Auth Failed: ${err.message || 'Unknown'}`);
+      addSystemMessage(`Drive Integration Failed: ${err.message || 'Unknown'}`);
     }
   };
 
@@ -127,8 +137,6 @@ const App: React.FC = () => {
       
       if (isManualBackup) {
           addSystemMessage('Snapshot Protocol: Manual backup successfully stored in Drive.');
-      } else {
-          console.log("Auto-sync successful");
       }
     } catch (err: any) {
       if (err instanceof driveService.SessionExpiredError) {
@@ -139,19 +147,6 @@ const App: React.FC = () => {
     } finally {
       setIsSyncing(false);
     }
-  };
-
-  const handleOpenRestore = async () => {
-      setIsSyncing(true);
-      try {
-        const files = await driveService.listJSONFiles();
-        setBackups(files);
-        setShowRestoreModal(true);
-      } catch (err: any) {
-        if (err instanceof driveService.SessionExpiredError) setIsSleeping(true);
-      } finally {
-        setIsSyncing(false);
-      }
   };
 
   const handleSendMessage = async () => {
@@ -171,23 +166,45 @@ const App: React.FC = () => {
       setMemory(newMemory);
       setFocus(newFocus);
       setMessages(prev => [...prev, { role: 'model', content: response, timestamp: Date.now() }]);
-      
       await handleSyncUp(newMemory, newFocus);
     } catch (error: any) {
-      if (error instanceof driveService.SessionExpiredError) {
-        setIsSleeping(true);
-        setInput(currentInput);
-      } else {
-        addSystemMessage(`Neural Core Error: ${error.message}`);
-      }
+      addSystemMessage(`ALERT: ${error.message}`);
+      if (error.message.includes("Expired")) setIsSleeping(true);
+      else setInput(currentInput);
     } finally {
       setIsLoading(false);
     }
   };
 
+  if (configError) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-zinc-950 p-6">
+        <div className="max-w-md w-full bg-zinc-900 border border-red-500/30 rounded-2xl p-8 text-center space-y-6 shadow-2xl">
+          <AlertTriangle size={48} className="text-red-500 mx-auto" />
+          <div>
+            <h1 className="text-xl font-bold text-white uppercase tracking-tighter italic">Configuration Required</h1>
+            <p className="text-zinc-400 text-sm mt-2 leading-relaxed">{configError}</p>
+          </div>
+          <div className="text-left bg-black/40 rounded-lg p-4 border border-zinc-800">
+            <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+              <Settings size={10} /> Setup Instructions
+            </h3>
+            <ul className="text-xs text-zinc-400 space-y-2">
+              <li className="flex gap-2"><span>1.</span> <span>Add <b>VITE_API_KEY</b> to your environment.</span></li>
+              <li className="flex gap-2"><span>2.</span> <span>Add <b>VITE_GOOGLE_CLIENT_ID</b> for Drive storage.</span></li>
+              <li className="flex gap-2"><span>3.</span> <span>Restart development server or redeploy.</span></li>
+            </ul>
+          </div>
+          <button onClick={() => window.location.reload()} className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-3 rounded-xl transition-all">
+            RETRY INITIALIZATION
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen w-full bg-zinc-950 text-zinc-300 font-sans overflow-hidden relative">
-      
       {/* Recovery Prompt */}
       {recoveryAvailable && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[60] bg-indigo-900/90 backdrop-blur-md border border-indigo-500/50 rounded-full px-4 py-2 flex items-center gap-3 shadow-2xl animate-in slide-in-from-top duration-300">
@@ -279,15 +296,20 @@ const App: React.FC = () => {
                   </button>
                   {isDriveConnected ? (
                       <button 
-                          onClick={handleOpenRestore}
+                          onClick={() => {
+                              driveService.listJSONFiles().then(files => {
+                                  setBackups(files);
+                                  setShowRestoreModal(true);
+                              });
+                          }}
                           className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-amber-500 rounded-md border border-zinc-800 transition-colors"
                           title="Restore"
                       >
                           <Wrench size={14} />
                       </button>
                   ) : (
-                      <button onClick={handleConnectDrive} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold px-3 py-1.5 rounded-md transition-all">
-                          <LogIn size={12} /> CONNECT
+                      <button onClick={handleConnectDrive} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold px-3 py-1.5 rounded-md transition-all shadow-lg shadow-indigo-500/10">
+                          <LogIn size={12} /> CONNECT DRIVE
                       </button>
                   )}
               </div>
@@ -318,7 +340,7 @@ const App: React.FC = () => {
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                      placeholder={isDriveConnected ? "Execute instruction..." : "Authentication required..."}
+                      placeholder={isDriveConnected ? "Execute instruction..." : "Connect Drive to interact..."}
                       disabled={isLoading || !isDriveConnected}
                       className="w-full bg-zinc-900 border border-zinc-800 text-zinc-200 text-sm rounded-lg pl-4 pr-12 py-3 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 transition-all disabled:opacity-50 font-medium"
                   />
@@ -335,7 +357,7 @@ const App: React.FC = () => {
                     {isSyncing ? <Cloud size={10} className="text-indigo-500 animate-pulse" /> : <HardDrive size={10} />}
                     {isSyncing ? "Uplinking to Drive..." : "Sync stable"}
                 </div>
-                <div className="text-[9px] text-zinc-700 font-mono">v1.3.1-stable</div>
+                <div className="text-[9px] text-zinc-700 font-mono">v1.3.2-stable</div>
               </div>
           </footer>
         </section>

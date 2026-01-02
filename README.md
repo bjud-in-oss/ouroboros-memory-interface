@@ -1,20 +1,46 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Ouroboros AI Interface
 
-# Run and deploy your AI Studio app
+A recursive memory interface for autonomous agents using a Drive-Augmented architecture.
 
-This contains everything you need to run your app locally.
+## Setup for Developers (BYOK)
 
-View your app in AI Studio: https://ai.studio/apps/drive/1F2Z9f_bgwoFKaNYZdNOhzTX4X6alIveh
+To run this application, you must provide your own Google Cloud and Gemini API credentials.
 
-## Run Locally
+### Step 1: Create a Google Cloud Project
+1.  Go to the [Google Cloud Console](https://console.cloud.google.com/).
+2.  Create a new project (e.g., "Ouroboros-AI").
+3.  Enable the following APIs:
+    *   **Google Drive API** (For memory persistence).
+    *   **Generative Language API** (Google Gemini API).
 
-**Prerequisites:**  Node.js
+### Step 2: Obtain Credentials
+1.  **API Key:**
+    *   Navigate to **APIs & Services > Credentials**.
+    *   Click **Create Credentials > API Key**.
+    *   This will be your `VITE_API_KEY`.
+2.  **OAuth 2.0 Client ID:**
+    *   Navigate to **APIs & Services > OAuth consent screen**. Configure it (Internal/External) and add the scope `.../auth/drive.file`.
+    *   Navigate to **APIs & Services > Credentials**.
+    *   Click **Create Credentials > OAuth client ID**. Select **Web application**.
+    *   **Authorized JavaScript origins:**
+        *   `http://localhost:5173` (for local development)
+        *   `https://your-app-name.netlify.app` (for production)
+    *   **Authorized redirect URIs:**
+        *   `http://localhost:5173`
+        *   `https://your-app-name.netlify.app`
+    *   Copy the Client ID. This will be your `VITE_GOOGLE_CLIENT_ID`.
 
+### Step 3: Environment Configuration
+Create a `.env` file in the project root:
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+```env
+VITE_API_KEY=your_gemini_api_key_here
+VITE_GOOGLE_CLIENT_ID=your_oauth_client_id_here
+```
+
+For production (Netlify), add these as **Build Environment Variables** in the Netlify Dashboard under Site Settings.
+
+## Architecture
+*   **Neural Core:** Gemini 3 Pro (Text/Reasoning).
+*   **Long-term Memory:** Distributed JSON/Markdown on Google Drive.
+*   **State Management:** Atomic React state with LocalStorage recovery.

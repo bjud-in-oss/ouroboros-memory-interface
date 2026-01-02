@@ -2,7 +2,21 @@ import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { LongTermMemory, FocusLog } from "../types";
 import { readFile, createFile, ensureFolderExists, findFile } from "./driveService";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Prioritize platform-provided API_KEY but allow VITE_ overrides for local BYOK dev
+const getApiKey = () => {
+    return (import.meta as any).env?.VITE_API_KEY || 
+           process.env.VITE_API_KEY || 
+           process.env.API_KEY || 
+           '';
+};
+
+export const checkGeminiConfig = () => {
+  const key = getApiKey();
+  if (!key || key.length < 10) {
+    throw new Error("Missing Gemini API Key. Please configure your environment variables.");
+  }
+};
+
 const MAX_CHAR_LIMIT = 4000000;
 
 const enforceBudget = (content: string): string => {
@@ -67,7 +81,10 @@ const memoryUpdateSchema: Schema = {
 };
 
 export const processInteraction = async (userPrompt: string, currentMemory: LongTermMemory, currentFocus: FocusLog): Promise<{ response: string; newMemory: LongTermMemory; newFocus: FocusLog }> => {
-  // Upgrading to gemini-3-pro-preview for superior state reasoning and CoT adherence
+  checkGeminiConfig();
+  const apiKey = getApiKey();
+  const ai = new GoogleGenAI({ apiKey: apiKey });
+  
   const model = "gemini-3-pro-preview";
   let dynamicContext = "";
   const relevantProjects = currentMemory.active_projects.filter(p => p.detailed_spec_file_id && userPrompt.toLowerCase().includes(p.name.toLowerCase()));
@@ -147,53 +164,61 @@ Embed in 'text_response' to execute:
 
   systemPrompt = enforceBudget(systemPrompt);
 
-  const response = await ai.models.generateContent({
-    model,
-    contents: { role: 'user', parts: [{ text: userPrompt }] },
-    config: { systemInstruction: systemPrompt, responseMimeType: "application/json", responseSchema: memoryUpdateSchema }
-  });
-
-  const responseText = response.text || "{}";
-  let parsed;
   try {
-    parsed = JSON.parse(responseText);
-  } catch (e) {
-    console.error("Failed to parse Gemini response as JSON:", responseText);
-    throw new Error("Neural response parsing failed. The agent output invalid JSON.");
-  }
-  
-  // --- SELF-PRESERVATION INTEGRITY CHECK ---
-  const newMemory = parsed.updated_memory;
-  const currentCount = currentMemory.active_projects?.length || 0;
-  const newCount = newMemory.active_projects?.length || 0;
+    const response = await ai.models.generateContent({
+      model,
+      contents: { role: 'user', parts: [{ text: userPrompt }] },
+      config: { systemInstruction: systemPrompt, responseMimeType: "application/json", responseSchema: memoryUpdateSchema }
+    });
 
-  if (!newMemory.active_projects || !newMemory.core_instructions || (currentCount > 0 && newCount < currentCount)) {
-      console.error("Integrity check failed. Expected at least", currentCount, "projects, but got", newCount);
-      throw new Error(`Neural integrity check failed: Detected memory loss. Update aborted to prevent amnesia.`);
-  }
-
-  let finalResponseText = parsed.text_response;
-  let finalMemory = newMemory;
-  let finalFocus = parsed.updated_focus;
-
-  const toolRegex = /:::TOOL_REQUEST\s*(\{[\s\S]*?\})\s*:::/g;
-  let match;
-  while ((match = toolRegex.exec(finalResponseText)) !== null) {
+    const responseText = response.text || "{}";
+    let parsed;
     try {
-      const tr: ToolRequest = JSON.parse(match[1]);
-      const folderId = await ensureFolderExists();
-      
-      if (tr.tool === 'createFile') {
-        const id = await createFile(tr.args.name, tr.args.content, folderId, 'text/markdown');
-        finalResponseText += `\n\n[SYSTEM: File created. ID: ${id}]`;
-      } else if (tr.tool === 'findFile') {
-        const id = await findFile(tr.args.name);
-        finalResponseText += `\n\n[SYSTEM: File search for '${tr.args.name}' complete. ID: ${id || 'NOT_FOUND'}]`;
-      }
-    } catch (e: any) {
-      finalResponseText += `\n\n[SYSTEM ERROR executing tool: ${e.message}]`;
+      parsed = JSON.parse(responseText);
+    } catch (e) {
+      throw new Error("Neural response parsing failed. The agent output invalid JSON.");
     }
-  }
+    
+    const newMemory = parsed.updated_memory;
+    const currentCount = currentMemory.active_projects?.length || 0;
+    const newCount = newMemory.active_projects?.length || 0;
 
-  return { response: finalResponseText, newMemory: finalMemory, newFocus: finalFocus };
+    if (!newMemory.active_projects || !newMemory.core_instructions || (currentCount > 0 && newCount < currentCount)) {
+        throw new Error(`Neural integrity check failed: Detected memory loss. Update aborted.`);
+    }
+
+    let finalResponseText = parsed.text_response;
+    let finalMemory = newMemory;
+    let finalFocus = parsed.updated_focus;
+
+    const toolRegex = /:::TOOL_REQUEST\s*(\{[\s\S]*?\})\s*:::/g;
+    let match;
+    while ((match = toolRegex.exec(finalResponseText)) !== null) {
+      try {
+        const tr: ToolRequest = JSON.parse(match[1]);
+        const folderId = await ensureFolderExists();
+        
+        if (tr.tool === 'createFile') {
+          const id = await createFile(tr.args.name, tr.args.content, folderId, 'text/markdown');
+          finalResponseText += `\n\n[SYSTEM: File created. ID: ${id}]`;
+        } else if (tr.tool === 'findFile') {
+          const id = await findFile(tr.args.name);
+          finalResponseText += `\n\n[SYSTEM: File search for '${tr.args.name}' complete. ID: ${id || 'NOT_FOUND'}]`;
+        }
+      } catch (e: any) {
+        finalResponseText += `\n\n[SYSTEM ERROR executing tool: ${e.message}]`;
+      }
+    }
+
+    return { response: finalResponseText, newMemory: finalMemory, newFocus: finalFocus };
+  } catch (err: any) {
+    const errorMsg = err.message || "";
+    if (errorMsg.includes("quota") || errorMsg.includes("429") || errorMsg.includes("Rate limit")) {
+      throw new Error("SYSTEM: FREE QUOTA EXCEEDED. Please wait or upgrade to a paid Gemini plan.");
+    }
+    if (errorMsg.includes("billing") || errorMsg.includes("PaymentRequired") || errorMsg.includes("402")) {
+      throw new Error("SYSTEM: BILLING REQUIRED. Your Google Cloud project needs a billing account to continue these complex tasks.");
+    }
+    throw err;
+  }
 };
