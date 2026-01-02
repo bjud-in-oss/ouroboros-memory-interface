@@ -5,7 +5,7 @@ import { processInteraction, checkGeminiConfig } from './services/geminiService'
 import * as driveService from './services/driveService';
 import MemoryPanel from './components/MemoryPanel';
 import FocusPanel from './components/FocusPanel';
-import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Wrench, X, History, Moon, Zap, AlertTriangle, Settings, FileJson, Upload, FileUp } from 'lucide-react';
+import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Wrench, X, History, Moon, Zap, AlertTriangle, Settings, FileJson, Upload, FileUp, Link } from 'lucide-react';
 
 const VOLATILE_MEMORY_KEY = 'ouroboros_volatile_memory';
 const CHAT_HISTORY_KEY = 'ouroboros_chat_history';
@@ -34,6 +34,7 @@ const App: React.FC = () => {
   
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     // Check configuration on mount
@@ -71,6 +72,14 @@ const App: React.FC = () => {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+        textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 200) + 'px';
+    }
+  }, [input]);
 
   const addSystemMessage = (content: string) => {
     setMessages(prev => [...prev, { role: 'system', content, timestamp: Date.now() }]);
@@ -169,11 +178,55 @@ const App: React.FC = () => {
             addSystemMessage('Manual Import: State injected successfully. Uplinking to Drive...');
             
             // Immediately save to Drive to establish ownership with new Client ID
-            await handleSyncUp(parsed.memory, parsed.focus, false); 
+            await handleSyncUp(parsed.memory, parsed.focus, false);
+            
+            // Suggest Relink
+            setTimeout(() => {
+                if (window.confirm("Legacy State Detected. Do you want to auto-scan Drive to relink file IDs for your projects?")) {
+                    handleSmartRelink(parsed.memory);
+                }
+            }, 500);
         }
     } catch (e: any) {
         alert(`Import Failed: ${e.message}`);
     }
+  };
+
+  const handleSmartRelink = async (currentMem: LongTermMemory = memory) => {
+      if (!isDriveConnected) return;
+      setIsSyncing(true);
+      addSystemMessage("Scanning Drive for project artifacts...");
+      
+      try {
+          let foundUpdates = [];
+          for (const project of currentMem.active_projects) {
+              // Search for file by project name (fuzzy match)
+              const newId = await driveService.findFile(project.name);
+              if (newId && newId !== project.detailed_spec_file_id) {
+                  foundUpdates.push({ name: project.name, oldId: project.detailed_spec_file_id, newId });
+              }
+          }
+
+          setIsSyncing(false);
+
+          if (foundUpdates.length > 0) {
+              const updateString = foundUpdates.map(u => `- Project "${u.name}": Change ID to "${u.newId}"`).join('\n');
+              const prompt = `SYSTEM MAINTENANCE: I have performed a filesystem scan of the new Drive environment. \n\nPlease update the 'active_projects' list with these VALID file IDs immediately:\n${updateString}\n\nPreserve all other project data exactly as is.`;
+              
+              setInput(prompt);
+              // We defer the send slightly to ensure state updates
+              setTimeout(() => {
+                  const sendBtn = document.querySelector('button[aria-label="Send Message"]'); // Or direct call
+                  handleSendMessage(prompt); 
+              }, 100);
+          } else {
+              addSystemMessage("Scan complete. No matching artifacts found for active projects.");
+          }
+
+      } catch (e: any) {
+          setIsSyncing(false);
+          addSystemMessage(`Scan Failed: ${e.message}`);
+      }
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -195,22 +248,31 @@ const App: React.FC = () => {
     addSystemMessage(`Artifact Injection: ${successCount} files uploaded successfully.`);
     setIsSyncing(false);
     if (fileInputRef.current) fileInputRef.current.value = ''; // Reset input
+
+    // Suggest Relink
+    if (successCount > 0) {
+        setTimeout(() => {
+            if (window.confirm("Artifacts uploaded. Do you want to scan and relink project IDs now?")) {
+                handleSmartRelink();
+            }
+        }, 500);
+    }
   };
 
-  const handleSendMessage = async () => {
-    if (!input.trim() || isLoading || !isDriveConnected) return;
+  const handleSendMessage = async (overrideInput?: string) => {
+    const textToSend = overrideInput || input;
+    if (!textToSend.trim() || isLoading || !isDriveConnected) return;
     
-    const userMsg: ChatMessage = { role: 'user', content: input, timestamp: Date.now() };
+    const userMsg: ChatMessage = { role: 'user', content: textToSend, timestamp: Date.now() };
     setMessages(prev => [...prev, userMsg]);
     
-    const currentInput = input;
     setInput('');
     setIsLoading(true);
     
     addSystemMessage('Neural Core: Processing instruction... (Gemini 3 Pro)');
 
     try {
-      const { response, newMemory, newFocus } = await processInteraction(currentInput, memory, focus);
+      const { response, newMemory, newFocus } = await processInteraction(textToSend, memory, focus);
       setMemory(newMemory);
       setFocus(newFocus);
       setMessages(prev => [...prev, { role: 'model', content: response, timestamp: Date.now() }]);
@@ -218,7 +280,7 @@ const App: React.FC = () => {
     } catch (error: any) {
       addSystemMessage(`ALERT: ${error.message}`);
       if (error.message.includes("Expired")) setIsSleeping(true);
-      else setInput(currentInput);
+      else if (!overrideInput) setInput(textToSend); // Restore input on failure if it wasn't an automated prompt
     } finally {
       setIsLoading(false);
     }
@@ -399,6 +461,13 @@ const App: React.FC = () => {
                             <FileUp size={14} />
                         </button>
                         <button 
+                            onClick={() => handleSmartRelink()}
+                            className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-purple-400 hover:text-purple-300 rounded-md border border-zinc-800 transition-colors"
+                            title="Scan & Relink IDs"
+                        >
+                            <Link size={14} />
+                        </button>
+                        <button 
                             onClick={() => setShowImportModal(true)}
                             className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-emerald-400 rounded-md border border-zinc-800 transition-colors"
                             title="Import Legacy JSON"
@@ -445,20 +514,27 @@ const App: React.FC = () => {
           </div>
 
           <footer className="p-4 border-t border-zinc-800 bg-zinc-950">
-              <div className="relative">
-                  <input
-                      type="text"
+              <div className="relative bg-zinc-900 border border-zinc-800 rounded-xl transition-all focus-within:border-indigo-500/50 focus-within:ring-1 focus-within:ring-indigo-500/20">
+                  <textarea
+                      ref={textareaRef}
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                      placeholder={isDriveConnected ? "Execute instruction..." : "Connect Drive to interact..."}
+                      onKeyDown={(e) => {
+                          if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                              e.preventDefault();
+                              handleSendMessage();
+                          }
+                      }}
+                      rows={1}
+                      placeholder={isDriveConnected ? "Execute instruction... (Ctrl+Enter to send)" : "Connect Drive to interact..."}
                       disabled={isLoading || !isDriveConnected}
-                      className="w-full bg-zinc-900 border border-zinc-800 text-zinc-200 text-sm rounded-lg pl-4 pr-12 py-3 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 transition-all disabled:opacity-50 font-medium"
+                      className="w-full bg-transparent border-none text-zinc-200 text-sm pl-4 pr-12 py-3 focus:ring-0 resize-none max-h-[200px] min-h-[46px] overflow-y-auto custom-scrollbar disabled:opacity-50 font-medium"
                   />
                   <button 
-                      onClick={handleSendMessage}
+                      onClick={() => handleSendMessage()}
                       disabled={isLoading || !input.trim() || !isDriveConnected}
-                      className="absolute right-2 top-2 p-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md transition-all disabled:opacity-50"
+                      aria-label="Send Message"
+                      className="absolute right-2 bottom-2 p-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md transition-all disabled:opacity-50"
                   >
                       {isLoading ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Send size={16} />}
                   </button>

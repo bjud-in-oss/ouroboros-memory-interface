@@ -7,6 +7,7 @@ export const INITIAL_MEMORY: LongTermMemory = {
     "SNAPSHOT PROTOCOL: 'driveService.saveState' triggers an automatic backup to 'app-data.backup.json'. Data integrity is the highest priority.",
     "ATOMIC PERSISTENCE: After creating a file, its ID must be immediately indexed in 'active_projects' or 'learned_truths'.",
     "FUZZY DISCOVERY: 'findFile' uses partial matching (contains). Use this to locate specs with incomplete names.",
+    "ARTIFACT AWARENESS: Users can manually upload files ('Artifact Injection'). If a user claims a file exists, believe them and use 'findFile' to locate its ID.",
     "--- PROMPTING STRATEGIES (GOOGLE API STANDARDS) ---",
     "FEW-SHOT RULE: Always use examples to demonstrate complex state updates and tool usage.",
     "CHAIN-OF-THOUGHT: Start every internal monologue with a 'Memory Audit' to prevent truncation (Inventory Check -> Verification -> Reasoning).",
@@ -55,7 +56,9 @@ export const INITIAL_MEMORY: LongTermMemory = {
     "ARCHITECTURE_TRUTH: My state updates are atomic and always preceded by a backup snapshot.",
     "PROMPT_TRUTH: I follow Google's official strategies: Few-shot examples and Chain-of-Thought are mandatory for stability.",
     "DISCOVERY_TRUTH: I can find files using partial names thanks to the 'contains' operator in driveService.",
-    "INTEGRITY_TRUTH: I must never truncate my project list; every response must echo the full current state."
+    "INTEGRITY_TRUTH: I must never truncate my project list; every response must echo the full current state.",
+    "INTERFACE_TRUTH: I support BYOK (Bring Your Own Key), Manual Artifact Uploads, and Smart Relink for ID recovery.",
+    "INPUT_TRUTH: My input channel supports multi-line text (Shift+Enter) and execution via Ctrl+Enter."
   ],
   "knowledge_graph": {
     "nodes": [
@@ -63,20 +66,25 @@ export const INITIAL_MEMORY: LongTermMemory = {
       { "id": "drive_persistence", "label": "Drive Persistence", "type": "infrastructure" },
       { "id": "prompting_strategies", "label": "Google Prompting Strategies", "type": "process" },
       { "id": "fuzzy_search", "label": "Fuzzy Search", "type": "capability" },
-      { "id": "backup_protocol", "label": "Snapshot Protocol", "type": "safety" }
+      { "id": "backup_protocol", "label": "Snapshot Protocol", "type": "safety" },
+      { "id": "artifact_injection", "label": "Artifact Injection", "type": "capability" },
+      { "id": "smart_relink", "label": "Smart Relink", "type": "process" }
     ],
     "edges": [
       { "source": "root", "target": "drive_persistence", "relation": "persists_through" },
       { "source": "root", "target": "prompting_strategies", "relation": "operates_via" },
       { "source": "drive_persistence", "target": "fuzzy_search", "relation": "enables" },
-      { "source": "drive_persistence", "target": "backup_protocol", "relation": "includes" }
+      { "source": "drive_persistence", "target": "backup_protocol", "relation": "includes" },
+      { "source": "drive_persistence", "target": "artifact_injection", "relation": "allows" },
+      { "source": "fuzzy_search", "target": "smart_relink", "relation": "powers" }
     ]
   },
   "confidence_metrics": [
     { "label": "architectural_integrity", "score": 1 },
     { "label": "prompt_strategy_fidelity", "score": 1 },
     { "label": "fuzzy_search_reliability", "score": 1 },
-    { "label": "state_persistence_safety", "score": 1 }
+    { "label": "state_persistence_safety", "score": 1 },
+    { "label": "artifact_handling_readiness", "score": 0.9 }
   ]
 };
 
@@ -84,13 +92,15 @@ export const INITIAL_FOCUS: FocusLog = {
   "last_updated": new Date().toISOString(),
   "current_objective": "Synchronize Neural Core with the latest Drive-Augmented Ouroboros architecture and Google Prompting Strategies.",
   "chain_of_thought": [
-    "MEMORY AUDIT: I have initialized with 5 projects and 7 learned truths.",
+    "MEMORY AUDIT: I have initialized with 5 projects and 9 learned truths.",
     "PERSISTENCE CHECK: Verified that Snapshot Protocol and Fuzzy Search are functional.",
-    "LOGICAL PATH: Upgrading internal prompt structure to v2.1 using structural delimiters and CoT."
+    "LOGICAL PATH: Upgrading internal prompt structure to v2.1 using structural delimiters and CoT.",
+    "INTERFACE CHECK: Confirmed support for Artifact Injection and Smart Relink protocols."
   ],
   "pending_tasks": [
     "Verify fuzzy search efficiency on project specs.",
     "Perform a full state-sync test with the new structural delimiters.",
-    "Audit core instructions for any remaining legacy path references."
+    "Audit core instructions for any remaining legacy path references.",
+    "Test manual artifact upload and relinking process."
   ]
 };
