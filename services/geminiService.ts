@@ -80,12 +80,16 @@ const memoryUpdateSchema: Schema = {
   required: ["text_response", "updated_memory", "updated_focus"]
 };
 
-export const processInteraction = async (userPrompt: string, currentMemory: LongTermMemory, currentFocus: FocusLog): Promise<{ response: string; newMemory: LongTermMemory; newFocus: FocusLog }> => {
+export const processInteraction = async (
+    userPrompt: string, 
+    currentMemory: LongTermMemory, 
+    currentFocus: FocusLog,
+    modelId: string = "gemini-3-pro-preview"
+): Promise<{ response: string; newMemory: LongTermMemory; newFocus: FocusLog }> => {
   checkGeminiConfig();
   const apiKey = getApiKey();
   const ai = new GoogleGenAI({ apiKey: apiKey });
   
-  const model = "gemini-3-pro-preview";
   let dynamicContext = "";
   const relevantProjects = currentMemory.active_projects.filter(p => p.detailed_spec_file_id && userPrompt.toLowerCase().includes(p.name.toLowerCase()));
 
@@ -166,7 +170,7 @@ Embed in 'text_response' to execute:
 
   try {
     const response = await ai.models.generateContent({
-      model,
+      model: modelId,
       contents: { role: 'user', parts: [{ text: userPrompt }] },
       config: { systemInstruction: systemPrompt, responseMimeType: "application/json", responseSchema: memoryUpdateSchema }
     });
@@ -214,7 +218,7 @@ Embed in 'text_response' to execute:
   } catch (err: any) {
     const errorMsg = err.message || "";
     if (errorMsg.includes("quota") || errorMsg.includes("429") || errorMsg.includes("Rate limit")) {
-      throw new Error("SYSTEM: FREE QUOTA EXCEEDED. Please wait or upgrade to a paid Gemini plan.");
+      throw new Error(`SYSTEM: FREE QUOTA EXCEEDED for model ${modelId}. Switch to 'Flash' for higher limits.`);
     }
     if (errorMsg.includes("billing") || errorMsg.includes("PaymentRequired") || errorMsg.includes("402")) {
       throw new Error("SYSTEM: BILLING REQUIRED. Your Google Cloud project needs a billing account to continue these complex tasks.");

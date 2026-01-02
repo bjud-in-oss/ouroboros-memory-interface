@@ -6,7 +6,7 @@ import * as driveService from './services/driveService';
 import MemoryPanel from './components/MemoryPanel';
 import FocusPanel from './components/FocusPanel';
 import RelinkModal from './components/RelinkModal';
-import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Wrench, X, History, Moon, Zap, AlertTriangle, FileJson, Upload, FileUp, Link } from 'lucide-react';
+import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Wrench, X, History, Moon, Zap, AlertTriangle, FileJson, Upload, FileUp, Link, ChevronDown } from 'lucide-react';
 
 // Hooks
 import { useDriveOperations } from './hooks/useDriveOperations';
@@ -15,6 +15,12 @@ import { useSystemActions } from './hooks/useSystemActions';
 
 const VOLATILE_MEMORY_KEY = 'ouroboros_volatile_memory';
 const CHAT_HISTORY_KEY = 'ouroboros_chat_history';
+const MODEL_PREF_KEY = 'ouroboros_model_pref';
+
+const AVAILABLE_MODELS = [
+  { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro', desc: 'Complex Logic • Low Quota' },
+  { id: 'gemini-2.5-flash-latest', name: 'Gemini 2.5 Flash', desc: 'Fast • High Quota' }
+];
 
 const App: React.FC = () => {
   const [configError, setConfigError] = useState<string | null>(null);
@@ -26,6 +32,12 @@ const App: React.FC = () => {
       { role: 'system', content: 'Drive-Augmented Ouroboros System Online. Waiting for connection...', timestamp: Date.now() }
     ];
   });
+  
+  // Model Selection State
+  const [currentModel, setCurrentModel] = useState<string>(() => {
+      return localStorage.getItem(MODEL_PREF_KEY) || 'gemini-3-pro-preview';
+  });
+
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'memory' | 'focus'>('memory');
@@ -121,6 +133,10 @@ const App: React.FC = () => {
   }, [messages]);
 
   useEffect(() => {
+    localStorage.setItem(MODEL_PREF_KEY, currentModel);
+  }, [currentModel]);
+
+  useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
@@ -152,10 +168,11 @@ const App: React.FC = () => {
     setInput('');
     setIsLoading(true);
     
-    addSystemMessage('Neural Core: Processing instruction... (Gemini 3 Pro)');
+    const modelName = AVAILABLE_MODELS.find(m => m.id === currentModel)?.name || currentModel;
+    addSystemMessage(`Neural Core: Processing instruction via ${modelName}...`);
 
     try {
-      const { response, newMemory, newFocus } = await processInteraction(textToSend, memory, focus);
+      const { response, newMemory, newFocus } = await processInteraction(textToSend, memory, focus, currentModel);
       setMemory(newMemory);
       setFocus(newFocus);
       setMessages(prev => [...prev, { role: 'model', content: response, timestamp: Date.now() }]);
@@ -289,12 +306,28 @@ const App: React.FC = () => {
                   <div className="w-8 h-8 rounded bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white shadow-lg shadow-indigo-500/20">
                       <Cpu size={18} />
                   </div>
-                  <div>
-                      <h1 className="font-bold text-zinc-100 tracking-tighter text-sm uppercase italic">Ouroboros Core</h1>
-                      <div className="flex items-center gap-1.5">
+                  <div className="flex flex-col">
+                      <div className="flex items-center gap-2">
+                        <h1 className="font-bold text-zinc-100 tracking-tighter text-sm uppercase italic hidden sm:block">Ouroboros Core</h1>
+                        {/* Model Selector */}
+                        <div className="relative group">
+                           <select 
+                              value={currentModel} 
+                              onChange={(e) => setCurrentModel(e.target.value)}
+                              className="appearance-none bg-zinc-900 border border-zinc-700 text-[10px] text-zinc-300 rounded px-2 py-0.5 pr-5 focus:ring-1 focus:ring-indigo-500 outline-none cursor-pointer hover:bg-zinc-800 hover:border-zinc-600 transition-all font-mono"
+                           >
+                              {AVAILABLE_MODELS.map(m => (
+                                <option key={m.id} value={m.id}>{m.name}</option>
+                              ))}
+                           </select>
+                           <ChevronDown size={10} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none group-hover:text-zinc-300" />
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-1.5 mt-0.5">
                           <span className={`w-1.5 h-1.5 rounded-full ${isDriveConnected ? 'bg-emerald-500' : 'bg-amber-500'} ${isSyncing ? 'animate-ping' : ''}`}></span>
-                          <span className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest">
-                              {isDriveConnected ? (isSyncing ? 'Syncing...' : 'Sync Active') : 'Offline'}
+                          <span className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest truncate max-w-[120px]">
+                              {isDriveConnected ? (isSyncing ? 'Syncing...' : AVAILABLE_MODELS.find(m => m.id === currentModel)?.desc) : 'Offline'}
                           </span>
                       </div>
                   </div>
@@ -354,7 +387,7 @@ const App: React.FC = () => {
                     {isSyncing ? <Cloud size={10} className="text-indigo-500 animate-pulse" /> : <HardDrive size={10} />}
                     {isSyncing ? "Uplinking to Drive..." : "Sync stable"}
                 </div>
-                <div className="text-[9px] text-zinc-700 font-mono">v1.3.5-relink-modular</div>
+                <div className="text-[9px] text-zinc-700 font-mono">v1.3.6-multi-model</div>
               </div>
           </footer>
         </section>
