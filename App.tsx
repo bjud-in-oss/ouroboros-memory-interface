@@ -5,7 +5,7 @@ import { processInteraction } from './services/geminiService';
 import * as driveService from './services/driveService';
 import MemoryPanel from './components/MemoryPanel';
 import FocusPanel from './components/FocusPanel';
-import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Wrench, X, History, Moon, Zap } from 'lucide-react';
+import { Terminal, Trash2, Send, Cpu, HardDrive, Download, Cloud, LogIn, Wrench, X, History, Moon, Zap, CheckCircle2 } from 'lucide-react';
 
 const VOLATILE_MEMORY_KEY = 'ouroboros_volatile_memory';
 
@@ -51,13 +51,17 @@ const App: React.FC = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  const addSystemMessage = (content: string) => {
+    setMessages(prev => [...prev, { role: 'system', content, timestamp: Date.now() }]);
+  };
+
   const handleRecovery = () => {
     const saved = localStorage.getItem(VOLATILE_MEMORY_KEY);
     if (saved) {
       const parsed = JSON.parse(saved);
       if (parsed.input) setInput(parsed.input);
       if (parsed.focus) setFocus(parsed.focus);
-      setMessages(prev => [...prev, { role: 'system', content: 'Volatile memory recovered from local storage.', timestamp: Date.now() }]);
+      addSystemMessage('Volatile memory recovered from local storage.');
     }
     setRecoveryAvailable(false);
   };
@@ -67,10 +71,10 @@ const App: React.FC = () => {
       await driveService.authenticate();
       setIsDriveConnected(true);
       setIsSleeping(false);
-      setMessages(prev => [...prev, { role: 'system', content: 'Authentication Successful.', timestamp: Date.now() }]);
+      addSystemMessage('Authentication Successful. Neural link established.');
       await handleSyncDown();
     } catch (err: any) {
-      setMessages(prev => [...prev, { role: 'system', content: `Auth Failed: ${err.message || 'Unknown'}`, timestamp: Date.now() }]);
+      addSystemMessage(`Auth Failed: ${err.message || 'Unknown'}`);
     }
   };
 
@@ -81,15 +85,15 @@ const App: React.FC = () => {
       if (data) {
         setMemory(data.memory);
         setFocus(data.focus);
-        setMessages(prev => [...prev, { role: 'system', content: `Memory loaded from ${fileId ? 'Backup' : 'Drive'}.`, timestamp: Date.now() }]);
+        addSystemMessage(`Memory loaded from ${fileId ? 'Backup Fragment' : 'Primary Drive State'}.`);
       } else {
-        setMessages(prev => [...prev, { role: 'system', content: 'No state found. Initializing defaults.', timestamp: Date.now() }]);
+        addSystemMessage('No existing state found on Drive. Initializing default Ouroboros matrix.');
       }
     } catch (err: any) {
       if (err instanceof driveService.SessionExpiredError) {
         setIsSleeping(true);
       } else {
-        setMessages(prev => [...prev, { role: 'system', content: 'Failed to load from Drive.', timestamp: Date.now() }]);
+        addSystemMessage('Failed to load state from Drive. Check connection.');
       }
     } finally {
       setIsSyncing(false);
@@ -101,11 +105,21 @@ const App: React.FC = () => {
     if (!isDriveConnected) return;
     setIsSyncing(true);
     try {
-      const payload: AppData = { app_version: "1.3.0", last_sync_timestamp: Date.now(), memory: newMemory, focus: newFocus };
+      const payload: AppData = { app_version: "1.3.1", last_sync_timestamp: Date.now(), memory: newMemory, focus: newFocus };
       await driveService.saveState(payload, isManualBackup);
+      
+      if (isManualBackup) {
+          addSystemMessage('Snapshot Protocol: Manual backup successfully stored in Drive.');
+      } else {
+          // Silent or minimal feedback for auto-sync to avoid cluttering, 
+          // but we add it now as requested.
+          console.log("Auto-sync successful");
+      }
     } catch (err: any) {
       if (err instanceof driveService.SessionExpiredError) {
         setIsSleeping(true);
+      } else {
+        addSystemMessage(`Sync Failure: ${err.message}`);
       }
     } finally {
       setIsSyncing(false);
@@ -127,24 +141,30 @@ const App: React.FC = () => {
 
   const handleSendMessage = async () => {
     if (!input.trim() || isLoading || !isDriveConnected) return;
+    
     const userMsg: ChatMessage = { role: 'user', content: input, timestamp: Date.now() };
     setMessages(prev => [...prev, userMsg]);
+    
     const currentInput = input;
     setInput('');
     setIsLoading(true);
+    
+    addSystemMessage('Neural Core: Processing instruction... (Gemini 3 Pro)');
 
     try {
       const { response, newMemory, newFocus } = await processInteraction(currentInput, memory, focus);
       setMemory(newMemory);
       setFocus(newFocus);
       setMessages(prev => [...prev, { role: 'model', content: response, timestamp: Date.now() }]);
+      
+      // After model response, we sync up and provide feedback
       await handleSyncUp(newMemory, newFocus);
     } catch (error: any) {
       if (error instanceof driveService.SessionExpiredError) {
         setIsSleeping(true);
         setInput(currentInput);
       } else {
-        setMessages(prev => [...prev, { role: 'system', content: `Neural Error: ${error.message}`, timestamp: Date.now() }]);
+        addSystemMessage(`Neural Core Error: ${error.message}`);
       }
     } finally {
       setIsLoading(false);
@@ -156,7 +176,7 @@ const App: React.FC = () => {
       
       {/* Recovery Prompt */}
       {recoveryAvailable && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[60] bg-indigo-900/90 backdrop-blur-md border border-indigo-500/50 rounded-full px-4 py-2 flex items-center gap-3 shadow-2xl">
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[60] bg-indigo-900/90 backdrop-blur-md border border-indigo-500/50 rounded-full px-4 py-2 flex items-center gap-3 shadow-2xl animate-in slide-in-from-top duration-300">
            <span className="text-[10px] font-bold text-white uppercase tracking-wider">Unsaved session detected</span>
            <div className="flex gap-2">
               <button onClick={handleRecovery} className="bg-white text-indigo-900 text-[10px] font-bold px-3 py-1 rounded-full hover:bg-indigo-50 transition-colors">RECOVER</button>
@@ -230,7 +250,7 @@ const App: React.FC = () => {
                       <div className="flex items-center gap-1.5">
                           <span className={`w-1.5 h-1.5 rounded-full ${isDriveConnected ? 'bg-emerald-500' : 'bg-amber-500'} ${isSyncing ? 'animate-ping' : ''}`}></span>
                           <span className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest">
-                              {isDriveConnected ? 'Sync Active' : 'Offline'}
+                              {isDriveConnected ? (isSyncing ? 'Syncing...' : 'Sync Active') : 'Offline'}
                           </span>
                       </div>
                   </div>
@@ -255,13 +275,14 @@ const App: React.FC = () => {
           <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-4">
               {messages.map((msg, i) => (
                   <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                      <div className={`max-w-[90%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${
+                      <div className={`max-w-[90%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm transition-all animate-in fade-in slide-in-from-bottom-2 ${
                           msg.role === 'user' 
                               ? 'bg-zinc-800 text-zinc-100 rounded-tr-none border border-zinc-700' 
                               : msg.role === 'system'
-                              ? 'bg-red-950/20 text-red-400 border border-red-900/30 text-[10px] font-mono w-full px-3 py-2'
+                              ? 'bg-zinc-900/50 text-indigo-400 border border-indigo-900/30 text-[9px] font-mono w-full px-3 py-2 flex items-center gap-2 italic uppercase tracking-wider'
                               : 'bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-tl-none'
                       }`}>
+                          {msg.role === 'system' && <Terminal size={10} className="shrink-0" />}
                           {msg.content}
                       </div>
                   </div>
@@ -291,7 +312,7 @@ const App: React.FC = () => {
               <div className="flex justify-between items-center mt-3 px-1">
                 <div className="text-[9px] text-zinc-600 uppercase font-bold tracking-widest flex items-center gap-1.5">
                     {isSyncing ? <Cloud size={10} className="text-indigo-500 animate-pulse" /> : <HardDrive size={10} />}
-                    {isSyncing ? "Uplinking..." : "Local persistent"}
+                    {isSyncing ? "Uplinking to Drive..." : "Sync stable"}
                 </div>
                 <div className="text-[9px] text-zinc-700 font-mono">v1.3.1-stable</div>
               </div>
@@ -313,23 +334,25 @@ const App: React.FC = () => {
               <div className="flex items-center gap-1">
                   <button 
                       onClick={() => handleSyncUp(memory, focus, true)}
-                      className="p-2 text-indigo-400 hover:bg-indigo-500/10 rounded-md transition-colors"
-                      title="Snapshot"
+                      disabled={isSyncing || !isDriveConnected}
+                      className="p-2 text-indigo-400 hover:bg-indigo-500/10 rounded-md transition-colors disabled:opacity-30"
+                      title="Snapshot to Drive"
                   >
-                      <Cloud size={18} />
+                      <Cloud size={18} className={isSyncing ? 'animate-bounce' : ''} />
                   </button>
                   <button onClick={() => {
                       const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ memory, focus }, null, 2));
                       const dl = document.createElement('a');
                       dl.setAttribute("href", dataStr);
-                      dl.setAttribute("download", "ouroboros_state.json");
+                      dl.setAttribute("download", `ouroboros_backup_${new Date().toISOString().split('T')[0]}.json`);
                       dl.click();
+                      addSystemMessage('Local storage: State exported as JSON file.');
                   }} className="p-2 text-zinc-500 hover:text-zinc-300 rounded-md transition-colors">
                       <Download size={18} />
                   </button>
                   <div className="h-4 w-px bg-zinc-800 mx-2"></div>
                   <button onClick={() => {
-                      if(window.confirm("Nuclear reset? This wipes local volatile state.")) {
+                      if(window.confirm("Nuclear reset? This wipes local volatile state and resets session.")) {
                           setMemory(INITIAL_MEMORY);
                           setFocus(INITIAL_FOCUS);
                           localStorage.removeItem(VOLATILE_MEMORY_KEY);
